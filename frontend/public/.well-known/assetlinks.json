@@ -1,0 +1,15 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls",
+      "delegate_permission/common.get_login_creds"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.homepulse.familyapp",
+      "sha256_cert_fingerprints": [
+        "14:6D:E9:CD:07:46:68:06:19:6A:0E:8F:BB:E5:42:92:46:4C:81:D8:02:97:58:7A:83:DF:A7:F0:45:00:67:DB"
+      ]
+    }
+  }
+]

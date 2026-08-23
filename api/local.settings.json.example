@@ -1,0 +1,15 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "node",
+    "COSMOS_DB_CONNECTION_STRING": "AccountEndpoint=https://your-cosmos-account.documents.azure.com:443/;AccountKey=your-key==",
+    "COSMOS_DB_DATABASE_NAME": "HomePulseDB",
+    "GEMINI_API_KEY": "your-gemini-api-key-here",
+    "OPENAI_API_KEY": "your-openai-api-key-here",
+    "GOOGLE_PLAY_PACKAGE_NAME": "com.homepulse.familyapp",
+    "GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL": "play-store-service@your-project.iam.gserviceaccount.com",
+    "GOOGLE_PLAY_PRIVATE_KEY": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC...\n-----END PRIVATE KEY-----\n",
+    "ALLOWED_ORIGINS": "http://localhost:3000,https://proud-sea-xxx.azurestaticapps.net"
+  }
+}

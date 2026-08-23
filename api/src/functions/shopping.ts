@@ -1,0 +1,81 @@
+import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
+import { queryItems, saveItem, deleteItemById } from '../shared/db';
+import { ShoppingItem } from '../shared/types';
+
+const CONTAINER = 'shopping';
+
+export async function shoppingHandler(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
+  const method = req.method;
+  const headers = {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+  };
+
+  if (method === 'OPTIONS') {
+    return { status: 204, headers };
+  }
+
+  try {
+    if (method === 'GET') {
+      const items = await queryItems<ShoppingItem>(CONTAINER);
+      return { status: 200, headers, body: JSON.stringify(items) };
+    }
+
+    if (method === 'POST') {
+      const data = (await req.json()) as Partial<ShoppingItem>;
+      if (!data.title) {
+        return { status: 400, headers, body: JSON.stringify({ error: 'Title is required' }) };
+      }
+
+      const newItem: ShoppingItem = {
+        id: data.id || `shop_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        title: data.title,
+        category: data.category || 'Sonstiges',
+        quantity: data.quantity,
+        unit: data.unit,
+        assignedMemberId: data.assignedMemberId,
+        completed: !!data.completed,
+        completedBy: data.completedBy,
+        completedAt: data.completedAt,
+        createdAt: data.createdAt || new Date().toISOString()
+      };
+
+      const saved = await saveItem<ShoppingItem>(CONTAINER, newItem);
+      return { status: 201, headers, body: JSON.stringify(saved) };
+    }
+
+    if (method === 'PUT') {
+      const data = (await req.json()) as ShoppingItem;
+      if (!data.id) {
+        return { status: 400, headers, body: JSON.stringify({ error: 'Item id is required for update' }) };
+      }
+
+      const updated = await saveItem<ShoppingItem>(CONTAINER, data);
+      return { status: 200, headers, body: JSON.stringify(updated) };
+    }
+
+    if (method === 'DELETE') {
+      const id = req.query.get('id');
+      if (!id) {
+        return { status: 400, headers, body: JSON.stringify({ error: 'Item id query parameter is required' }) };
+      }
+
+      const deleted = await deleteItemById(CONTAINER, id);
+      return { status: 200, headers, body: JSON.stringify({ success: deleted, id }) };
+    }
+
+    return { status: 405, headers, body: JSON.stringify({ error: 'Method Not Allowed' }) };
+  } catch (error: any) {
+    context.error('Error in shoppingHandler:', error);
+    return { status: 500, headers, body: JSON.stringify({ error: error.message || 'Internal Server Error' }) };
+  }
+}
+
+app.http('shopping', {
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  authLevel: 'anonymous',
+  route: 'shopping',
+  handler: shoppingHandler
+});

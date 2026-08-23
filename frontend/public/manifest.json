@@ -1,0 +1,34 @@
+{
+  "name": "HomePulse - Haushalts- & Familienmanager",
+  "short_name": "HomePulse",
+  "description": "Schlanker, moderner & KI-gestützter Haushalts- und Familienkalender mit Einkaufsliste",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#090d16",
+  "theme_color": "#16a34a",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["lifestyle", "productivity", "utilities"],
+  "shortcuts": [
+    {
+      "name": "Einkaufsliste",
+      "short_name": "Einkauf",
+      "description": "Direkt zur gemeinsamen Einkaufsliste",
+      "url": "/?tab=shopping",
+      "icons": [{ "src": "/icon.svg", "sizes": "96x96" }]
+    },
+    {
+      "name": "Familienkalender",
+      "short_name": "Kalender",
+      "description": "Familientermine ansehen",
+      "url": "/?tab=calendar",
+      "icons": [{ "src": "/icon.svg", "sizes": "96x96" }]
+    }
+  ]
+}

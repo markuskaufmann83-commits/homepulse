@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10B981" />
+      <stop offset="50%" stop-color="#059669" />
+      <stop offset="100%" stop-color="#047857" />
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="12" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="128" fill="url(#grad1)" />
+  <!-- House outline -->
+  <path d="M256 96L112 216V400C112 408.837 119.163 416 128 416H384C392.837 416 400 408.837 400 400V216L256 96Z" stroke="white" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.3"/>
+  <!-- Pulse waveform in center -->
+  <path d="M120 280H190L220 200L260 360L295 240L320 280H392" stroke="#FFFFFF" stroke-width="32" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>
+  <circle cx="256" cy="180" r="14" fill="#6EE7B7" />
+</svg>

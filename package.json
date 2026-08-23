@@ -1,0 +1,28 @@
+{
+  "name": "homepulse-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "HomePulse - Modern Serverless Household & Family Management App",
+  "scripts": {
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:api": "cd api && npm start",
+    "build:frontend": "cd frontend && npm run build",
+    "build:api": "cd api && npm run build",
+    "build": "npm run build:api && npm run build:frontend",
+    "build:android": "cd frontend && npm run cap:sync",
+    "open:android": "cd frontend && npm run cap:open",
+    "install:all": "npm install && cd api && npm install && cd ../frontend && npm install"
+  },
+  "keywords": [
+    "azure",
+    "serverless",
+    "nextjs",
+    "cosmosdb",
+    "household",
+    "family",
+    "voice-assistant",
+    "google-play-billing"
+  ],
+  "author": "HomePulse Team",
+  "license": "MIT"
+}

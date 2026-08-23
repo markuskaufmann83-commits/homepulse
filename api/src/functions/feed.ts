@@ -1,0 +1,84 @@
+import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
+import { queryItems, saveItem, deleteItemById, getItemById } from '../shared/db';
+import { FeedPost } from '../shared/types';
+
+const CONTAINER = 'feed';
+
+export async function feedHandler(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
+  const method = req.method;
+  const headers = {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+  };
+
+  if (method === 'OPTIONS') {
+    return { status: 204, headers };
+  }
+
+  try {
+    if (method === 'GET') {
+      const items = await queryItems<FeedPost>(CONTAINER);
+      // Sort pinned first, then by timestamp desc
+      items.sort((a, b) => {
+        if (a.pinned && !b.pinned) return -1;
+        if (!a.pinned && b.pinned) return 1;
+        return b.timestamp.localeCompare(a.timestamp);
+      });
+      return { status: 200, headers, body: JSON.stringify(items) };
+    }
+
+    if (method === 'POST') {
+      const data = (await req.json()) as Partial<FeedPost>;
+      if (!data.content || !data.authorId) {
+        return { status: 400, headers, body: JSON.stringify({ error: 'Content and authorId are required' }) };
+      }
+
+      const newPost: FeedPost = {
+        id: data.id || `post_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        authorId: data.authorId,
+        content: data.content,
+        type: data.type || 'note',
+        timestamp: data.timestamp || new Date().toISOString(),
+        pinned: !!data.pinned,
+        reactions: data.reactions || {}
+      };
+
+      const saved = await saveItem<FeedPost>(CONTAINER, newPost);
+      return { status: 201, headers, body: JSON.stringify(saved) };
+    }
+
+    if (method === 'PUT') {
+      const data = (await req.json()) as FeedPost;
+      if (!data.id) {
+        return { status: 400, headers, body: JSON.stringify({ error: 'Post id is required for update' }) };
+      }
+
+      const updated = await saveItem<FeedPost>(CONTAINER, data);
+      return { status: 200, headers, body: JSON.stringify(updated) };
+    }
+
+    if (method === 'DELETE') {
+      const id = req.query.get('id');
+      if (!id) {
+        return { status: 400, headers, body: JSON.stringify({ error: 'Post id query parameter is required' }) };
+      }
+
+      const deleted = await deleteItemById(CONTAINER, id);
+      return { status: 200, headers, body: JSON.stringify({ success: deleted, id }) };
+    }
+
+    return { status: 405, headers, body: JSON.stringify({ error: 'Method Not Allowed' }) };
+  } catch (error: any) {
+    context.error('Error in feedHandler:', error);
+    return { status: 500, headers, body: JSON.stringify({ error: error.message || 'Internal Server Error' }) };
+  }
+}
+
+app.http('feed', {
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  authLevel: 'anonymous',
+  route: 'feed',
+  handler: feedHandler
+});
