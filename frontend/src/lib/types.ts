@@ -46,6 +46,16 @@ export interface CalendarEvent {
   category?: 'Familie' | 'Schule' | 'Arbeit' | 'Freizeit' | 'Arzt' | 'Sonstiges';
   isAllDay?: boolean;
   createdAt: string;
+  isGoogleSynced?: boolean;
+  googleEventId?: string;
+  externalSource?: 'google_calendar' | 'ical' | 'manual';
+}
+
+export interface FeedComment {
+  id: string;
+  authorId: string;
+  content: string;
+  timestamp: string;
 }
 
 export type FeedPostType = 'status' | 'note' | 'alert' | 'meal';
@@ -58,6 +68,17 @@ export interface FeedPost {
   timestamp: string;
   pinned?: boolean;
   reactions?: Record<string, string[]>; // emoji -> array of memberIds
+  comments?: FeedComment[];
+}
+
+// Google Calendar Sync Configuration
+export interface GoogleCalendarConfig {
+  memberId: string;
+  iCalUrl?: string;
+  autoSync: boolean;
+  lastSync?: string;
+  syncStatus?: 'idle' | 'syncing' | 'success' | 'error';
+  errorMessage?: string;
 }
 
 // AI Voice & Text Action Types
@@ -132,6 +153,13 @@ export interface SubscriptionStatus {
   orderId?: string;
   features: string[];
   lastVerifiedAt: string;
+}
+
+export interface PurchaseVerificationRequest {
+  purchaseToken: string;
+  productId: string;
+  packageName: string;
+  householdId?: string;
 }
 
 export interface PurchaseVerificationResponse {

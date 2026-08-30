@@ -1,8 +1,10 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { CalendarEvent, FamilyMember } from '../lib/types';
+import { CalendarEvent, FamilyMember, GoogleCalendarConfig } from '../lib/types';
 import { Api } from '../lib/api';
+import { GoogleCalendarService } from '../lib/googleCalendar';
+import { downloadIcsFile } from '../lib/ical';
 import {
   Calendar as CalendarIcon,
   Plus,
@@ -15,19 +17,31 @@ import {
   List,
   Grid,
   Sparkles,
+  Edit2,
+  RefreshCw,
+  Download,
+  Upload,
+  ExternalLink,
+  Check,
+  CalendarDays,
   X
 } from 'lucide-react';
+import confetti from 'canvas-confetti';
 
 const CATEGORIES = ['Familie', 'Schule', 'Arbeit', 'Freizeit', 'Arzt', 'Sonstiges'] as const;
 
-export const CalendarView: React.FC = () => {
+interface CalendarViewProps {
+  onOpenVoice?: () => void;
+}
+
+export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenVoice }) => {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [members, setMembers] = useState<FamilyMember[]>([]);
-  const [viewMode, setViewMode] = useState<'agenda' | 'month'>('agenda');
+  const [viewMode, setViewMode] = useState<'agenda' | 'week' | 'month'>('agenda');
   const [filterMember, setFilterMember] = useState<string>('all');
 
-  // Month navigation
-  const [currentMonth, setCurrentMonth] = useState(new Date());
+  // Navigation dates
+  const [currentDate, setCurrentDate] = useState(new Date());
 
   // Add Event Modal
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -38,6 +52,16 @@ export const CalendarView: React.FC = () => {
   const [newLocation, setNewLocation] = useState('');
   const [newCategory, setNewCategory] = useState<typeof CATEGORIES[number]>('Familie');
   const [assignedMembers, setAssignedMembers] = useState<string[]>(['all']);
+
+  // Edit Event Modal
+  const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
+
+  // Google Sync Modal
+  const [isGoogleSyncOpen, setIsGoogleSyncOpen] = useState(false);
+  const [gcalUrl, setGcalUrl] = useState('');
+  const [selectedSyncMember, setSelectedSyncMember] = useState<string>('mem_2'); // Default Papa
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncStatusMsg, setSyncStatusMsg] = useState<{ text: string; isError: boolean } | null>(null);
 
   const loadData = async () => {
     const [fetchedEvents, fetchedMembers] = await Promise.all([
@@ -75,9 +99,59 @@ export const CalendarView: React.FC = () => {
     await loadData();
   };
 
+  const handleSaveEditEvent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingEvent) return;
+    await Api.updateCalendarEvent(editingEvent);
+    setEditingEvent(null);
+    await loadData();
+  };
+
   const handleDeleteEvent = async (id: string) => {
     await Api.deleteCalendarEvent(id);
     await loadData();
+  };
+
+  // Google Calendar Sync Execution
+  const handleExecuteGoogleSync = async () => {
+    setIsSyncing(true);
+    setSyncStatusMsg(null);
+
+    const result = await GoogleCalendarService.syncFromUrl(gcalUrl, selectedSyncMember);
+    if (result.success) {
+      setSyncStatusMsg({ text: result.message, isError: false });
+      try {
+        confetti({ particleCount: 35, spread: 45, origin: { y: 0.7 } });
+      } catch {}
+      await loadData();
+    } else {
+      setSyncStatusMsg({ text: result.message, isError: true });
+    }
+    setIsSyncing(false);
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async event => {
+      const content = event.target?.result as string;
+      if (content) {
+        const res = GoogleCalendarService.importFromIcsText(content, selectedSyncMember);
+        if (res.success) {
+          setSyncStatusMsg({ text: res.message, isError: false });
+          await loadData();
+        } else {
+          setSyncStatusMsg({ text: res.message, isError: true });
+        }
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleExportIcs = () => {
+    downloadIcsFile(events, 'homepulse-familienkalender.ics');
   };
 
   // Filter events
@@ -86,7 +160,6 @@ export const CalendarView: React.FC = () => {
     return e.assignedMemberIds.includes('all') || e.assignedMemberIds.includes(filterMember);
   });
 
-  // Helper for member assignment details
   const getAssignedMembersInfo = (ids: string[]) => {
     if (ids.includes('all')) {
       return { label: 'Alle', color: '#10B981', avatar: '👨‍👩‍👧‍👦' };
@@ -98,7 +171,7 @@ export const CalendarView: React.FC = () => {
     return { label: `${mems.length} Personen`, color: '#6366F1', avatar: '👥' };
   };
 
-  // Date formatting helpers
+  // Helper date formatters
   const formatEventDateHeader = (dateStr: string) => {
     const date = new Date(dateStr);
     const today = new Date();
@@ -130,9 +203,143 @@ export const CalendarView: React.FC = () => {
     return (day + 6) % 7; // Monday = 0
   };
 
+  // Week View helpers (7 days based on currentDate)
+  const getWeekDays = (baseDate: Date) => {
+    const current = new Date(baseDate);
+    const day = current.getDay();
+    const diff = current.getDate() - day + (day === 0 ? -6 : 1); // Adjust when Sunday
+    const monday = new Date(current.setDate(diff));
+
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
+      return d;
+    });
+  };
+
+  const renderWeekView = () => {
+    const weekDays = getWeekDays(currentDate);
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    return (
+      <div className="space-y-4">
+        {/* Week Header Navigation */}
+        <div className="flex items-center justify-between px-2">
+          <h3 className="text-sm sm:text-base font-bold text-white">
+            Woche vom {weekDays[0].toLocaleDateString('de-DE', { day: 'numeric', month: 'short' })} bis{' '}
+            {weekDays[6].toLocaleDateString('de-DE', { day: 'numeric', month: 'short', year: 'numeric' })}
+          </h3>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => {
+                const d = new Date(currentDate);
+                d.setDate(d.getDate() - 7);
+                setCurrentDate(d);
+              }}
+              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setCurrentDate(new Date())}
+              className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-colors"
+            >
+              Heute
+            </button>
+            <button
+              onClick={() => {
+                const d = new Date(currentDate);
+                d.setDate(d.getDate() + 7);
+                setCurrentDate(d);
+              }}
+              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* 7 Columns Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-7 gap-2">
+          {weekDays.map(day => {
+            const dateStr = day.toISOString().split('T')[0];
+            const isToday = dateStr === todayStr;
+            const dayEvents = filteredEvents.filter(e => e.date === dateStr);
+
+            return (
+              <div
+                key={dateStr}
+                className={`p-3 rounded-2xl border flex flex-col justify-between min-h-[160px] transition-all ${
+                  isToday
+                    ? 'bg-blue-950/40 border-blue-500/50 shadow-md shadow-blue-900/20'
+                    : 'bg-slate-900/60 border-white/5 hover:border-white/15'
+                }`}
+              >
+                <div>
+                  <div className="flex items-center justify-between pb-2 border-b border-white/5 mb-2">
+                    <span className="text-[11px] font-semibold text-slate-400">
+                      {day.toLocaleDateString('de-DE', { weekday: 'short' })}
+                    </span>
+                    <span
+                      className={`text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center ${
+                        isToday ? 'bg-blue-500 text-white' : 'text-slate-200'
+                      }`}
+                    >
+                      {day.getDate()}
+                    </span>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    {dayEvents.length === 0 ? (
+                      <span className="text-[10px] text-slate-500 block text-center py-4">Keine Termine</span>
+                    ) : (
+                      dayEvents.map(ev => {
+                        const info = getAssignedMembersInfo(ev.assignedMemberIds);
+                        return (
+                          <div
+                            key={ev.id}
+                            onClick={() => setEditingEvent(ev)}
+                            className="p-1.5 rounded-xl border text-[11px] font-medium text-white cursor-pointer hover:scale-[1.02] transition-transform space-y-0.5"
+                            style={{
+                              backgroundColor: `${info.color}25`,
+                              borderColor: `${info.color}66`
+                            }}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-bold text-slate-300">{ev.time || 'Ganztägig'}</span>
+                              {ev.isGoogleSynced && (
+                                <span className="text-[9px] px-1 rounded bg-blue-500/30 text-blue-200">G</span>
+                              )}
+                            </div>
+                            <p className="truncate font-semibold text-white leading-tight">{ev.title}</p>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => {
+                    setNewDate(dateStr);
+                    setIsAddModalOpen(true);
+                  }}
+                  className="mt-2 w-full py-1 rounded-lg text-[10px] text-slate-400 hover:text-white hover:bg-white/5 border border-dashed border-white/10 flex items-center justify-center gap-1"
+                >
+                  <Plus className="w-3 h-3" />
+                  <span>Termin</span>
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   const renderMonthView = () => {
-    const year = currentMonth.getFullYear();
-    const month = currentMonth.getMonth();
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
     const totalDays = daysInMonth(year, month);
     const startingDay = firstDayOfMonth(year, month);
 
@@ -153,19 +360,19 @@ export const CalendarView: React.FC = () => {
           </h3>
           <div className="flex items-center gap-1">
             <button
-              onClick={() => setCurrentMonth(new Date(year, month - 1, 1))}
+              onClick={() => setCurrentDate(new Date(year, month - 1, 1))}
               className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
             <button
-              onClick={() => setCurrentMonth(new Date())}
+              onClick={() => setCurrentDate(new Date())}
               className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-colors"
             >
               Heute
             </button>
             <button
-              onClick={() => setCurrentMonth(new Date(year, month + 1, 1))}
+              onClick={() => setCurrentDate(new Date(year, month + 1, 1))}
               className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
             >
               <ChevronRight className="w-4 h-4" />
@@ -193,16 +400,20 @@ export const CalendarView: React.FC = () => {
             return (
               <div
                 key={`day-${d}`}
-                className={`min-h-[75px] p-1.5 rounded-xl border flex flex-col justify-between transition-all ${
+                onClick={() => {
+                  setNewDate(dateStr);
+                  setIsAddModalOpen(true);
+                }}
+                className={`min-h-[75px] p-1.5 rounded-xl border flex flex-col justify-between transition-all cursor-pointer ${
                   isToday
-                    ? 'bg-emerald-500/15 border-emerald-500/40 shadow-sm'
-                    : 'bg-slate-900/60 border-white/5 hover:border-white/15'
+                    ? 'bg-blue-500/15 border-blue-500/40 shadow-sm'
+                    : 'bg-slate-900/60 border-white/5 hover:border-white/20'
                 }`}
               >
                 <div className="flex items-center justify-between">
                   <span
                     className={`text-xs font-bold w-5 h-5 flex items-center justify-center rounded-full ${
-                      isToday ? 'bg-emerald-500 text-white' : 'text-slate-300'
+                      isToday ? 'bg-blue-500 text-white' : 'text-slate-300'
                     }`}
                   >
                     {d}
@@ -218,6 +429,10 @@ export const CalendarView: React.FC = () => {
                     return (
                       <div
                         key={ev.id}
+                        onClick={e => {
+                          e.stopPropagation();
+                          setEditingEvent(ev);
+                        }}
                         className="text-[10px] px-1 py-0.5 rounded truncate font-medium text-white flex items-center gap-1"
                         style={{ backgroundColor: `${info.color}33`, borderColor: `${info.color}66`, borderWidth: 1 }}
                         title={`${ev.time || ''} ${ev.title}`}
@@ -243,7 +458,7 @@ export const CalendarView: React.FC = () => {
     <div className="space-y-6">
       {/* Header & Controls */}
       <div className="glass-panel rounded-3xl p-6 relative overflow-hidden">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="p-3 rounded-2xl bg-blue-500/20 text-blue-400 border border-blue-500/30">
               <CalendarIcon className="w-6 h-6" />
@@ -256,12 +471,12 @@ export const CalendarView: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 self-start sm:self-auto">
+          <div className="flex flex-wrap items-center gap-2 self-start lg:self-auto">
             {/* View Mode Toggle */}
             <div className="flex p-1 rounded-xl bg-slate-900 border border-white/10">
               <button
                 onClick={() => setViewMode('agenda')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
                   viewMode === 'agenda' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -269,8 +484,17 @@ export const CalendarView: React.FC = () => {
                 <span>Liste</span>
               </button>
               <button
+                onClick={() => setViewMode('week')}
+                className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                  viewMode === 'week' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <CalendarDays className="w-3.5 h-3.5" />
+                <span>Woche</span>
+              </button>
+              <button
                 onClick={() => setViewMode('month')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
                   viewMode === 'month' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -278,6 +502,16 @@ export const CalendarView: React.FC = () => {
                 <span>Monat</span>
               </button>
             </div>
+
+            {/* Google Calendar Sync Button */}
+            <button
+              onClick={() => setIsGoogleSyncOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-white/10 transition-colors shadow-sm"
+              title="Google Kalender synchronisieren"
+            >
+              <RefreshCw className="w-3.5 h-3.5 text-blue-400" />
+              <span>Google Sync</span>
+            </button>
 
             {/* New Event Button */}
             <button
@@ -325,9 +559,15 @@ export const CalendarView: React.FC = () => {
       </div>
 
       {/* Main Calendar Content */}
-      {viewMode === 'month' ? (
+      {viewMode === 'month' && (
         <div className="glass-panel rounded-3xl p-6">{renderMonthView()}</div>
-      ) : (
+      )}
+
+      {viewMode === 'week' && (
+        <div className="glass-panel rounded-3xl p-6">{renderWeekView()}</div>
+      )}
+
+      {viewMode === 'agenda' && (
         /* Agenda View */
         <div className="space-y-6">
           {Object.keys(eventsByDate).length === 0 ? (
@@ -337,7 +577,7 @@ export const CalendarView: React.FC = () => {
               </div>
               <h3 className="text-base font-semibold text-white">Keine anstehenden Termine</h3>
               <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                Für den gewählten Filter liegen aktuell keine Einträge vor. Erstelle einen Termin oder nutze den Sprachassistenten!
+                Für den gewählten Filter liegen aktuell keine Einträge vor. Erstelle einen Termin, synchronisiere Google Kalender oder nutze den Sprachassistenten!
               </p>
             </div>
           ) : (
@@ -367,6 +607,11 @@ export const CalendarView: React.FC = () => {
                                 >
                                   {ev.category || 'Familie'}
                                 </span>
+                                {ev.isGoogleSynced && (
+                                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30 flex items-center gap-1">
+                                    🗓️ Google
+                                  </span>
+                                )}
                                 <h4 className="text-sm font-semibold text-white">{ev.title}</h4>
                               </div>
                               {ev.description && (
@@ -374,13 +619,22 @@ export const CalendarView: React.FC = () => {
                               )}
                             </div>
 
-                            <button
-                              onClick={() => handleDeleteEvent(ev.id)}
-                              className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors opacity-0 group-hover:opacity-100"
-                              title="Termin löschen"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
+                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button
+                                onClick={() => setEditingEvent(ev)}
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                                title="Bearbeiten"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteEvent(ev.id)}
+                                className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                                title="Termin löschen"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                           </div>
 
                           <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-white/5 text-xs text-slate-400">
@@ -420,6 +674,127 @@ export const CalendarView: React.FC = () => {
         </div>
       )}
 
+      {/* Google Calendar Sync Modal */}
+      {isGoogleSyncOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in">
+          <div className="relative w-full max-w-lg rounded-3xl glass-panel bg-slate-900/95 border border-white/15 shadow-2xl p-6 space-y-5">
+            <div className="flex items-center justify-between pb-3 border-b border-white/10">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 rounded-2xl bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                  <RefreshCw className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">Google Kalender Sync</h3>
+                  <p className="text-xs text-slate-400">Gmail- und Google-Kalendertermine importieren</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsGoogleSyncOpen(false)}
+                className="p-2 rounded-xl text-slate-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Status Message */}
+            {syncStatusMsg && (
+              <div
+                className={`p-3 rounded-xl text-xs font-medium flex items-center gap-2 ${
+                  syncStatusMsg.isError
+                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                    : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                }`}
+              >
+                {syncStatusMsg.isError ? <X className="w-4 h-4 shrink-0" /> : <Check className="w-4 h-4 shrink-0" />}
+                <span>{syncStatusMsg.text}</span>
+              </div>
+            )}
+
+            {/* Step 1: Member Selection */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                Für welches Familienmitglied synchronisieren?
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {members.map(m => (
+                  <button
+                    key={m.id}
+                    onClick={() => setSelectedSyncMember(m.id)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border transition-all ${
+                      selectedSyncMember === m.id
+                        ? 'text-white font-bold'
+                        : 'bg-slate-950/50 border-white/10 text-slate-400'
+                    }`}
+                    style={{
+                      backgroundColor: selectedSyncMember === m.id ? `${m.color}33` : undefined,
+                      borderColor: selectedSyncMember === m.id ? m.color : undefined
+                    }}
+                  >
+                    <span>{m.avatar}</span>
+                    <span>{m.name}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Option A: Secret iCal URL */}
+            <div className="p-4 rounded-2xl bg-slate-950/60 border border-white/10 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                  <ExternalLink className="w-3.5 h-3.5 text-blue-400" />
+                  Google Kalender Geheimadresse (iCal)
+                </span>
+                <span className="text-[10px] text-slate-400">Automatisch synchronisiert</span>
+              </div>
+
+              <input
+                type="url"
+                value={gcalUrl}
+                onChange={e => setGcalUrl(e.target.value)}
+                placeholder="https://calendar.google.com/calendar/ical/.../basic.ics"
+                className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-white placeholder-slate-500 text-xs focus:outline-none focus:border-blue-500/50"
+              />
+
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                👉 <strong>So findest du den Link:</strong> In Google Kalender auf das Zahnrad ⚙️ &gt; <em>Einstellungen deines Kalenders</em> &gt; ganz unten unter <em>&quot;Geheime Adresse im iCal-Format&quot;</em> kopieren.
+              </p>
+
+              <button
+                onClick={handleExecuteGoogleSync}
+                disabled={isSyncing}
+                className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-semibold flex items-center justify-center gap-2 shadow-md shadow-blue-600/30 active:scale-95 transition-all"
+              >
+                {isSyncing ? (
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                ) : (
+                  <RefreshCw className="w-3.5 h-3.5" />
+                )}
+                <span>Jetzt mit Google synchronisieren</span>
+              </button>
+            </div>
+
+            {/* Option B: ICS Import / Export */}
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <label className="p-3 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-center cursor-pointer transition-colors flex flex-col items-center justify-center gap-1">
+                <Upload className="w-4 h-4 text-blue-400" />
+                <span className="text-xs font-semibold text-white">.ics Datei importieren</span>
+                <span className="text-[10px] text-slate-400">Aus Gmail heruntergeladen</span>
+                <input type="file" accept=".ics,text/calendar" onChange={handleFileUpload} className="hidden" />
+              </label>
+
+              <button
+                onClick={handleExportIcs}
+                className="p-3 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-center transition-colors flex flex-col items-center justify-center gap-1"
+              >
+                <Download className="w-4 h-4 text-emerald-400" />
+                <span className="text-xs font-semibold text-white">Kalender exportieren</span>
+                <span className="text-[10px] text-slate-400">Als .ics herunterladen</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Add Event Modal */}
       {isAddModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-in fade-in">
@@ -433,7 +808,7 @@ export const CalendarView: React.FC = () => {
               </div>
               <button
                 onClick={() => setIsAddModalOpen(false)}
-                className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/10"
+                className="p-2 rounded-xl text-slate-400 hover:text-white"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -460,7 +835,7 @@ export const CalendarView: React.FC = () => {
                     required
                     value={newDate}
                     onChange={e => setNewDate(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950/70 border border-white/10 text-white text-xs focus:outline-none focus:border-blue-500/50"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950/70 border border-white/10 text-white text-xs focus:outline-none"
                   />
                 </div>
                 <div>
@@ -469,7 +844,7 @@ export const CalendarView: React.FC = () => {
                     type="time"
                     value={newTime}
                     onChange={e => setNewTime(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950/70 border border-white/10 text-white text-xs focus:outline-none focus:border-blue-500/50"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950/70 border border-white/10 text-white text-xs focus:outline-none"
                   />
                 </div>
                 <div>
@@ -478,7 +853,7 @@ export const CalendarView: React.FC = () => {
                     type="time"
                     value={newEndTime}
                     onChange={e => setNewEndTime(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950/70 border border-white/10 text-white text-xs focus:outline-none focus:border-blue-500/50"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950/70 border border-white/10 text-white text-xs focus:outline-none"
                   />
                 </div>
               </div>
@@ -491,7 +866,7 @@ export const CalendarView: React.FC = () => {
                     value={newLocation}
                     onChange={e => setNewLocation(e.target.value)}
                     placeholder="z.B. Sportplatz / Praxis"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950/70 border border-white/10 text-white placeholder-slate-500 text-xs focus:outline-none focus:border-blue-500/50"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950/70 border border-white/10 text-white placeholder-slate-500 text-xs focus:outline-none"
                   />
                 </div>
                 <div>
@@ -499,7 +874,7 @@ export const CalendarView: React.FC = () => {
                   <select
                     value={newCategory}
                     onChange={e => setNewCategory(e.target.value as any)}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950/70 border border-white/10 text-white text-xs focus:outline-none focus:border-blue-500/50"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950/70 border border-white/10 text-white text-xs focus:outline-none"
                   >
                     {CATEGORIES.map(c => (
                       <option key={c} value={c} className="bg-slate-900 text-white">{c}</option>
@@ -573,6 +948,126 @@ export const CalendarView: React.FC = () => {
                 >
                   Termin speichern
                 </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Event Modal */}
+      {editingEvent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-in fade-in">
+          <div className="relative w-full max-w-lg rounded-3xl glass-panel bg-slate-900/95 border border-white/15 shadow-2xl p-6">
+            <div className="flex items-center justify-between pb-4 border-b border-white/10">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-blue-500/20 text-blue-400">
+                  <Edit2 className="w-5 h-5" />
+                </div>
+                <h3 className="text-lg font-bold text-white">Termin bearbeiten</h3>
+              </div>
+              <button
+                onClick={() => setEditingEvent(null)}
+                className="p-2 rounded-xl text-slate-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditEvent} className="mt-4 space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">Titel / Anlass *</label>
+                <input
+                  type="text"
+                  required
+                  value={editingEvent.title}
+                  onChange={e => setEditingEvent({ ...editingEvent, title: e.target.value })}
+                  className="w-full px-4 py-2 rounded-xl bg-slate-950/70 border border-white/10 text-white text-sm focus:outline-none focus:border-blue-500/50"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">Datum *</label>
+                  <input
+                    type="date"
+                    required
+                    value={editingEvent.date}
+                    onChange={e => setEditingEvent({ ...editingEvent, date: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950/70 border border-white/10 text-white text-xs focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">Uhrzeit</label>
+                  <input
+                    type="time"
+                    value={editingEvent.time || ''}
+                    onChange={e => setEditingEvent({ ...editingEvent, time: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950/70 border border-white/10 text-white text-xs focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">Ende</label>
+                  <input
+                    type="time"
+                    value={editingEvent.endTime || ''}
+                    onChange={e => setEditingEvent({ ...editingEvent, endTime: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950/70 border border-white/10 text-white text-xs focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">Ort</label>
+                  <input
+                    type="text"
+                    value={editingEvent.location || ''}
+                    onChange={e => setEditingEvent({ ...editingEvent, location: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950/70 border border-white/10 text-white text-xs focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">Kategorie</label>
+                  <select
+                    value={editingEvent.category || 'Familie'}
+                    onChange={e => setEditingEvent({ ...editingEvent, category: e.target.value as any })}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950/70 border border-white/10 text-white text-xs focus:outline-none"
+                  >
+                    {CATEGORIES.map(c => (
+                      <option key={c} value={c} className="bg-slate-900 text-white">{c}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-4 border-t border-white/10">
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleDeleteEvent(editingEvent.id);
+                    setEditingEvent(null);
+                  }}
+                  className="px-3 py-2 rounded-xl text-xs text-rose-400 hover:bg-rose-500/10 flex items-center gap-1 transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Löschen</span>
+                </button>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingEvent(null)}
+                    className="px-4 py-2 rounded-xl text-xs text-slate-400 hover:text-white"
+                  >
+                    Abbrechen
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-lg shadow-blue-600/30"
+                  >
+                    Änderungen speichern
+                  </button>
+                </div>
               </div>
             </form>
           </div>

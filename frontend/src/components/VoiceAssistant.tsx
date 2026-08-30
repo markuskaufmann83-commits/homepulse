@@ -1,17 +1,33 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, Send, Sparkles, Check, Trash2, X, AlertCircle, ShoppingCart, Calendar, MessageSquare, UserCheck } from 'lucide-react';
+import { Mic, MicOff, Send, Sparkles, Check, Trash2, X, AlertCircle, ShoppingCart, Calendar, MessageSquare, UserCheck, Volume2 } from 'lucide-react';
 import { AiAction, AiParseResponse, ShoppingCategory, MemberStatus } from '../lib/types';
 import { Api } from '../lib/api';
 import confetti from 'canvas-confetti';
 
 interface VoiceAssistantProps {
+  isOpen?: boolean;
+  onOpenChange?: (open: boolean) => void;
   onActionCompleted?: () => void;
 }
 
-export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onActionCompleted }) => {
-  const [isOpen, setIsOpen] = useState(false);
+export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({
+  isOpen: controlledIsOpen,
+  onOpenChange,
+  onActionCompleted
+}) => {
+  const [internalIsOpen, setInternalIsOpen] = useState(false);
+  const isOpen = controlledIsOpen !== undefined ? controlledIsOpen : internalIsOpen;
+
+  const setOpen = (open: boolean) => {
+    if (onOpenChange) {
+      onOpenChange(open);
+    } else {
+      setInternalIsOpen(open);
+    }
+  };
+
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [textInput, setTextInput] = useState('');
@@ -19,10 +35,11 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onActionComplete
   const [parsedResult, setParsedResult] = useState<AiParseResponse | null>(null);
   const [editableActions, setEditableActions] = useState<(AiAction & { selected: boolean })[]>([]);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
+  const [ttsEnabled, setTtsEnabled] = useState(true);
 
   const recognitionRef = useRef<any>(null);
 
-  // Initialize Web Speech API if supported
+  // Initialize Web Speech API
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const SpeechRecognition =
@@ -60,6 +77,17 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onActionComplete
       }
     }
   }, []);
+
+  const speakText = (text: string) => {
+    if (!ttsEnabled || typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    try {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'de-DE';
+      utterance.rate = 1.05;
+      window.speechSynthesis.speak(utterance);
+    } catch {}
+  };
 
   const toggleListening = () => {
     if (!recognitionRef.current) {
@@ -104,6 +132,9 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onActionComplete
           selected: true
         }))
       );
+
+      const count = res.actions.length;
+      speakText(`Ich habe ${count} ${count === 1 ? 'Aktion' : 'Aktionen'} für dich erkannt.`);
     } catch (err) {
       console.error('Error parsing AI prompt:', err);
       setFeedbackMessage('Fehler bei der KI-Analyse. Bitte nochmals versuchen.');
@@ -133,7 +164,6 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onActionComplete
 
       for (const action of toExecute) {
         if (action.type === 'SHOPPING_ADD') {
-          // Find matching member id if assigned
           const targetMember = members.find(
             m => m.name.toLowerCase() === (action.assignedTo || '').toLowerCase()
           );
@@ -175,14 +205,11 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onActionComplete
         }
       }
 
-      // Trigger Confetti!
+      // Trigger Confetti & Voice
       try {
-        confetti({
-          particleCount: 80,
-          spread: 70,
-          origin: { y: 0.8 }
-        });
+        confetti({ particleCount: 80, spread: 70, origin: { y: 0.8 } });
       } catch {}
+      speakText('Aktionen erfolgreich ausgeführt!');
 
       setFeedbackMessage(`${toExecute.length} Aktion(en) erfolgreich ausgeführt! 🎉`);
       setTimeout(() => {
@@ -190,7 +217,7 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onActionComplete
         setEditableActions([]);
         setTextInput('');
         setTranscript('');
-        setIsOpen(false);
+        setOpen(false);
         setFeedbackMessage(null);
         if (onActionCompleted) onActionCompleted();
       }, 1400);
@@ -204,8 +231,9 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onActionComplete
 
   const samplePrompts = [
     'Setze Bio-Eier und Hafermilch auf die Einkaufsliste für Papa und trage für Freitag 16 Uhr Kindergeburtstag im Kalender ein',
-    'Schreib auf die Liste 2kg Äpfel und Vollkornbrot für Mama',
-    'Trage für morgen um 09:00 Uhr Zahnarzttermin im Kalender ein'
+    'Kauf 2kg Äpfel und Vollkornbrot für Mama',
+    'Trage für morgen um 09:00 Uhr Zahnarzttermin im Kalender ein',
+    'Bin auf dem Heimweg von der Arbeit'
   ];
 
   return (
@@ -213,7 +241,7 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onActionComplete
       {/* Floating Action Button (FAB) */}
       <div className="fixed bottom-6 right-6 z-40">
         <button
-          onClick={() => setIsOpen(true)}
+          onClick={() => setOpen(true)}
           className="group relative flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-tr from-emerald-500 via-teal-500 to-cyan-500 text-white shadow-xl shadow-emerald-500/30 hover:scale-105 active:scale-95 transition-all duration-200"
           aria-label="KI Sprachassistent öffnen"
         >
@@ -227,8 +255,8 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onActionComplete
 
       {/* Voice Assistant Modal Drawer */}
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-in fade-in duration-200">
-          <div className="relative w-full max-w-xl rounded-3xl glass-panel bg-slate-900/95 border border-white/15 shadow-2xl p-6 overflow-hidden">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="relative w-full max-w-xl rounded-3xl glass-panel bg-slate-900/95 border border-white/15 shadow-2xl p-6 overflow-hidden max-h-[90vh] overflow-y-auto">
             {/* Header */}
             <div className="flex items-center justify-between pb-4 border-b border-white/10">
               <div className="flex items-center gap-2.5">
@@ -240,12 +268,27 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onActionComplete
                   <p className="text-xs text-slate-400">Sprich oder tippe deine Wünsche frei ein</p>
                 </div>
               </div>
-              <button
-                onClick={() => setIsOpen(false)}
-                className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setTtsEnabled(!ttsEnabled)}
+                  className={`p-2 rounded-xl border transition-colors ${
+                    ttsEnabled
+                      ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                      : 'text-slate-500 border-white/5 hover:bg-white/5'
+                  }`}
+                  title={ttsEnabled ? 'Sprachausgabe aktiv' : 'Sprachausgabe stumm'}
+                >
+                  <Volume2 className="w-4 h-4" />
+                </button>
+
+                <button
+                  onClick={() => setOpen(false)}
+                  className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             {/* Listening Wave Visualizer or Text Input */}

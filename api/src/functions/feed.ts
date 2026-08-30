@@ -1,6 +1,7 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
 import { queryItems, saveItem, deleteItemById, getItemById } from '../shared/db';
-import { FeedPost } from '../shared/types';
+import { FeedPost, FeedComment } from '../shared/types';
+import { SEED_FEED_POSTS } from './seed';
 
 const CONTAINER = 'feed';
 
@@ -19,7 +20,15 @@ export async function feedHandler(req: HttpRequest, context: InvocationContext):
 
   try {
     if (method === 'GET') {
-      const items = await queryItems<FeedPost>(CONTAINER);
+      let items = await queryItems<FeedPost>(CONTAINER);
+      if (items.length === 0) {
+        // Auto-seed initial posts
+        for (const post of SEED_FEED_POSTS) {
+          await saveItem<FeedPost>(CONTAINER, post);
+        }
+        items = SEED_FEED_POSTS;
+      }
+
       // Sort pinned first, then by timestamp desc
       items.sort((a, b) => {
         if (a.pinned && !b.pinned) return -1;
@@ -30,6 +39,30 @@ export async function feedHandler(req: HttpRequest, context: InvocationContext):
     }
 
     if (method === 'POST') {
+      const action = req.query.get('action');
+
+      // Comment sub-action
+      if (action === 'comment') {
+        const body = (await req.json()) as { postId: string; authorId: string; content: string };
+        const post = await getItemById<FeedPost>(CONTAINER, body.postId);
+        if (!post) {
+          return { status: 404, headers, body: JSON.stringify({ error: 'Post not found' }) };
+        }
+
+        const newComment: FeedComment = {
+          id: `comm_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          authorId: body.authorId,
+          content: body.content,
+          timestamp: new Date().toISOString()
+        };
+
+        if (!post.comments) post.comments = [];
+        post.comments.push(newComment);
+        await saveItem(CONTAINER, post);
+
+        return { status: 201, headers, body: JSON.stringify(post) };
+      }
+
       const data = (await req.json()) as Partial<FeedPost>;
       if (!data.content || !data.authorId) {
         return { status: 400, headers, body: JSON.stringify({ error: 'Content and authorId are required' }) };
@@ -42,7 +75,8 @@ export async function feedHandler(req: HttpRequest, context: InvocationContext):
         type: data.type || 'note',
         timestamp: data.timestamp || new Date().toISOString(),
         pinned: !!data.pinned,
-        reactions: data.reactions || {}
+        reactions: data.reactions || {},
+        comments: data.comments || []
       };
 
       const saved = await saveItem<FeedPost>(CONTAINER, newPost);

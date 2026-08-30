@@ -3,6 +3,7 @@ import {
   ShoppingItem,
   CalendarEvent,
   FeedPost,
+  FeedComment,
   AiParseResponse,
   SubscriptionStatus
 } from './types';
@@ -22,7 +23,17 @@ async function fetchWithFallback<T>(
   try {
     const res = await fetch(url, options);
     if (res.ok) {
-      return (await res.json()) as T;
+      const data = (await res.json()) as T;
+      // If array is returned and not empty, or non-array
+      if (Array.isArray(data)) {
+        if (data.length > 0) {
+          return data;
+        } else if (fallbackFn) {
+          // If empty array, fallback to default initial local data
+          return fallbackFn();
+        }
+      }
+      return data;
     }
   } catch (error) {
     console.info(`API call to ${url} failed or offline, using fallback storage:`, error);
@@ -35,6 +46,15 @@ async function fetchWithFallback<T>(
 }
 
 export const Api = {
+  // Seed / Reset all data on Azure Cosmos DB & LocalStorage
+  async seedData(): Promise<{ success: boolean; message: string }> {
+    try {
+      await fetch('/api/seed', { method: 'POST' });
+    } catch {}
+    storage.resetAllToMockData();
+    return { success: true, message: 'Daten erfolgreich auf Standard-Beispieldaten zurückgesetzt!' };
+  },
+
   // Members
   async getMembers(): Promise<FamilyMember[]> {
     return fetchWithFallback('/api/members', { method: 'GET' }, () => storage.loadMembers());
@@ -88,6 +108,18 @@ export const Api = {
     );
   },
 
+  async deleteMember(id: string): Promise<boolean> {
+    return fetchWithFallback(
+      `/api/members?id=${id}`,
+      { method: 'DELETE' },
+      () => {
+        const members = storage.loadMembers().filter(m => m.id !== id);
+        storage.saveMembers(members);
+        return true;
+      }
+    );
+  },
+
   // Shopping Items
   async getShoppingItems(): Promise<ShoppingItem[]> {
     return fetchWithFallback('/api/shopping', { method: 'GET' }, () => storage.loadShoppingItems());
@@ -117,6 +149,24 @@ export const Api = {
         items.unshift(newItem);
         storage.saveShoppingItems(items);
         return newItem;
+      }
+    );
+  },
+
+  async updateShoppingItem(item: ShoppingItem): Promise<ShoppingItem> {
+    return fetchWithFallback(
+      '/api/shopping',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(item)
+      },
+      () => {
+        const items = storage.loadShoppingItems();
+        const idx = items.findIndex(i => i.id === item.id);
+        if (idx >= 0) items[idx] = item;
+        storage.saveShoppingItems(items);
+        return item;
       }
     );
   },
@@ -161,6 +211,18 @@ export const Api = {
     );
   },
 
+  async clearCompletedShoppingItems(): Promise<boolean> {
+    return fetchWithFallback(
+      '/api/shopping?action=clear_completed',
+      { method: 'DELETE' },
+      () => {
+        const items = storage.loadShoppingItems().filter(i => !i.completed);
+        storage.saveShoppingItems(items);
+        return true;
+      }
+    );
+  },
+
   // Calendar Events
   async getCalendarEvents(): Promise<CalendarEvent[]> {
     return fetchWithFallback('/api/calendar', { method: 'GET' }, () => storage.loadCalendarEvents());
@@ -178,7 +240,10 @@ export const Api = {
       assignedMemberIds: event.assignedMemberIds || ['all'],
       category: event.category || 'Familie',
       isAllDay: !!event.isAllDay,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      isGoogleSynced: !!event.isGoogleSynced,
+      googleEventId: event.googleEventId,
+      externalSource: event.externalSource || 'manual'
     };
 
     return fetchWithFallback(
@@ -193,6 +258,24 @@ export const Api = {
         events.push(newEvent);
         storage.saveCalendarEvents(events);
         return newEvent;
+      }
+    );
+  },
+
+  async updateCalendarEvent(event: CalendarEvent): Promise<CalendarEvent> {
+    return fetchWithFallback(
+      '/api/calendar',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(event)
+      },
+      () => {
+        const events = storage.loadCalendarEvents();
+        const idx = events.findIndex(e => e.id === event.id);
+        if (idx >= 0) events[idx] = event;
+        storage.saveCalendarEvents(events);
+        return event;
       }
     );
   },
@@ -222,7 +305,8 @@ export const Api = {
       type: post.type || 'note',
       timestamp: new Date().toISOString(),
       pinned: !!post.pinned,
-      reactions: {}
+      reactions: {},
+      comments: []
     };
 
     return fetchWithFallback(
@@ -237,6 +321,34 @@ export const Api = {
         posts.unshift(newPost);
         storage.saveFeedPosts(posts);
         return newPost;
+      }
+    );
+  },
+
+  async addFeedComment(postId: string, content: string, authorId: string): Promise<FeedPost | null> {
+    const newComment: FeedComment = {
+      id: `comm_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      authorId,
+      content,
+      timestamp: new Date().toISOString()
+    };
+
+    return fetchWithFallback(
+      '/api/feed?action=comment',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ postId, content, authorId })
+      },
+      () => {
+        const posts = storage.loadFeedPosts();
+        const post = posts.find(p => p.id === postId);
+        if (post) {
+          if (!post.comments) post.comments = [];
+          post.comments.push(newComment);
+          storage.saveFeedPosts(posts);
+        }
+        return post || null;
       }
     );
   },

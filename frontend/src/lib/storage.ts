@@ -3,6 +3,7 @@ import {
   ShoppingItem,
   CalendarEvent,
   FeedPost,
+  FeedComment,
   SubscriptionStatus
 } from './types';
 import {
@@ -22,7 +23,7 @@ const KEYS = {
   CURRENT_USER_ID: 'homepulse_current_user_v1'
 };
 
-function dispatchDataChange(resource: string) {
+export function dispatchDataChange(resource: string) {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('homepulse-data-change', { detail: { resource } }));
   }
@@ -37,7 +38,8 @@ export function loadMembers(): FamilyMember[] {
       localStorage.setItem(KEYS.MEMBERS, JSON.stringify(INITIAL_MEMBERS));
       return INITIAL_MEMBERS;
     }
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    return parsed.length > 0 ? parsed : INITIAL_MEMBERS;
   } catch {
     return INITIAL_MEMBERS;
   }

@@ -1,6 +1,7 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
 import { queryItems, saveItem, deleteItemById } from '../shared/db';
 import { ShoppingItem } from '../shared/types';
+import { SEED_SHOPPING_ITEMS } from './seed';
 
 const CONTAINER = 'shopping';
 
@@ -19,7 +20,14 @@ export async function shoppingHandler(req: HttpRequest, context: InvocationConte
 
   try {
     if (method === 'GET') {
-      const items = await queryItems<ShoppingItem>(CONTAINER);
+      let items = await queryItems<ShoppingItem>(CONTAINER);
+      if (items.length === 0) {
+        // Auto-seed initial items
+        for (const item of SEED_SHOPPING_ITEMS) {
+          await saveItem<ShoppingItem>(CONTAINER, item);
+        }
+        items = SEED_SHOPPING_ITEMS;
+      }
       return { status: 200, headers, body: JSON.stringify(items) };
     }
 
@@ -57,6 +65,17 @@ export async function shoppingHandler(req: HttpRequest, context: InvocationConte
     }
 
     if (method === 'DELETE') {
+      const action = req.query.get('action');
+      if (action === 'clear_completed') {
+        const items = await queryItems<ShoppingItem>(CONTAINER);
+        for (const it of items) {
+          if (it.completed) {
+            await deleteItemById(CONTAINER, it.id);
+          }
+        }
+        return { status: 200, headers, body: JSON.stringify({ success: true, action: 'clear_completed' }) };
+      }
+
       const id = req.query.get('id');
       if (!id) {
         return { status: 400, headers, body: JSON.stringify({ error: 'Item id query parameter is required' }) };

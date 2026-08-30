@@ -3,13 +3,13 @@
 import React, { useState, useEffect } from 'react';
 import { FamilyMember, MemberStatus } from '../lib/types';
 import { Api } from '../lib/api';
-import { resetAllToMockData } from '../lib/storage';
 import {
   Users,
   Shield,
   ShieldAlert,
   Plus,
   Edit2,
+  Trash2,
   Check,
   RotateCcw,
   Sparkles,
@@ -20,6 +20,7 @@ import {
   Palmtree,
   X
 } from 'lucide-react';
+import confetti from 'canvas-confetti';
 
 const AVATAR_OPTIONS = ['👩‍💼', '👨‍💻', '👧', '👦', '👵', '👴', '🐶', '🐱', '🧑‍🎨', '👩‍🍳'];
 const COLOR_OPTIONS = ['#EC4899', '#3B82F6', '#8B5CF6', '#10B981', '#F59E0B', '#14B8A6', '#F43F5E', '#6366F1'];
@@ -75,6 +76,18 @@ export const MemberManager: React.FC = () => {
     await loadData();
   };
 
+  const handleDeleteMember = async (id: string) => {
+    if (members.length <= 1) {
+      alert('Mindestens ein Haushaltsmitglied muss bestehen bleiben.');
+      return;
+    }
+    if (confirm('Möchtest du dieses Mitglied wirklich aus dem Haushalt entfernen?')) {
+      await Api.deleteMember(id);
+      setEditingMember(null);
+      await loadData();
+    }
+  };
+
   const handleCreateMember = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newName.trim()) return;
@@ -90,13 +103,19 @@ export const MemberManager: React.FC = () => {
 
     setIsAddModalOpen(false);
     setNewName('');
+    try {
+      confetti({ particleCount: 30, spread: 50, origin: { y: 0.8 } });
+    } catch {}
     await loadData();
   };
 
-  const handleResetData = () => {
-    if (confirm('Möchtest du alle Daten auf die Standard-Demodaten zurücksetzen?')) {
-      resetAllToMockData();
-      loadData();
+  const handleResetData = async () => {
+    if (confirm('Möchtest du alle Daten auf die vollständigen Standard-Beispieldaten zurücksetzen?')) {
+      await Api.seedData();
+      try {
+        confetti({ particleCount: 60, spread: 70, origin: { y: 0.6 } });
+      } catch {}
+      await loadData();
     }
   };
 
@@ -133,11 +152,11 @@ export const MemberManager: React.FC = () => {
           <div className="flex items-center gap-2 self-start sm:self-auto">
             <button
               onClick={handleResetData}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 text-xs border border-white/10 transition-colors"
-              title="Demodaten zurücksetzen"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs border border-white/10 transition-colors"
+              title="Alle Daten auf Demo zurücksetzen"
             >
               <RotateCcw className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Demo-Reset</span>
+              <span>Demo-Daten wiederherstellen</span>
             </button>
 
             <button
@@ -288,6 +307,19 @@ export const MemberManager: React.FC = () => {
               </div>
 
               <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">Rolle</label>
+                <select
+                  value={editingMember.role}
+                  onChange={e => setEditingMember({ ...editingMember, role: e.target.value as any })}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-950/70 border border-white/10 text-white text-xs focus:outline-none"
+                >
+                  <option value="admin" className="bg-slate-900">Admin (Eltern)</option>
+                  <option value="member" className="bg-slate-900">Mitglied</option>
+                  <option value="child" className="bg-slate-900">Kind</option>
+                </select>
+              </div>
+
+              <div>
                 <label className="block text-xs font-medium text-slate-300 mb-1">Statusnachricht</label>
                 <input
                   type="text"
@@ -337,20 +369,31 @@ export const MemberManager: React.FC = () => {
                 </div>
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-4 border-t border-white/10">
+              <div className="flex items-center justify-between pt-4 border-t border-white/10">
                 <button
                   type="button"
-                  onClick={() => setEditingMember(null)}
-                  className="px-4 py-2 rounded-xl text-xs text-slate-400 hover:text-white"
+                  onClick={() => handleDeleteMember(editingMember.id)}
+                  className="px-3 py-2 rounded-xl text-xs text-rose-400 hover:bg-rose-500/10 flex items-center gap-1 transition-colors"
                 >
-                  Abbrechen
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Mitglied löschen</span>
                 </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/30"
-                >
-                  Speichern
-                </button>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingMember(null)}
+                    className="px-4 py-2 rounded-xl text-xs text-slate-400 hover:text-white"
+                  >
+                    Abbrechen
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/30"
+                  >
+                    Speichern
+                  </button>
+                </div>
               </div>
             </form>
           </div>

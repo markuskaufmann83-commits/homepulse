@@ -1,6 +1,7 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
 import { queryItems, saveItem, deleteItemById } from '../shared/db';
 import { CalendarEvent } from '../shared/types';
+import { SEED_CALENDAR_EVENTS } from './seed';
 
 const CONTAINER = 'calendar';
 
@@ -19,7 +20,37 @@ export async function calendarHandler(req: HttpRequest, context: InvocationConte
 
   try {
     if (method === 'GET') {
-      const items = await queryItems<CalendarEvent>(CONTAINER);
+      // iCal proxy action for Google Calendar
+      const action = req.query.get('action');
+      if (action === 'sync-ical') {
+        const url = req.query.get('url');
+        if (!url) {
+          return { status: 400, headers, body: JSON.stringify({ error: 'url is required' }) };
+        }
+        try {
+          const icsRes = await fetch(url);
+          if (icsRes.ok) {
+            const icsText = await icsRes.text();
+            return {
+              status: 200,
+              headers: { 'Content-Type': 'text/calendar; charset=utf-8', 'Access-Control-Allow-Origin': '*' },
+              body: icsText
+            };
+          }
+        } catch (e: any) {
+          return { status: 502, headers, body: JSON.stringify({ error: `Failed to fetch iCal: ${e.message}` }) };
+        }
+      }
+
+      let items = await queryItems<CalendarEvent>(CONTAINER);
+      if (items.length === 0) {
+        // Auto-seed initial events
+        for (const ev of SEED_CALENDAR_EVENTS) {
+          await saveItem<CalendarEvent>(CONTAINER, ev);
+        }
+        items = SEED_CALENDAR_EVENTS;
+      }
+
       // Sort by date and time
       items.sort((a, b) => {
         const dComp = a.date.localeCompare(b.date);
@@ -46,7 +77,10 @@ export async function calendarHandler(req: HttpRequest, context: InvocationConte
         assignedMemberIds: Array.isArray(data.assignedMemberIds) ? data.assignedMemberIds : ['all'],
         category: data.category || 'Familie',
         isAllDay: !!data.isAllDay,
-        createdAt: data.createdAt || new Date().toISOString()
+        createdAt: data.createdAt || new Date().toISOString(),
+        isGoogleSynced: !!data.isGoogleSynced,
+        googleEventId: data.googleEventId,
+        externalSource: data.externalSource || 'manual'
       };
 
       const saved = await saveItem<CalendarEvent>(CONTAINER, newEvent);

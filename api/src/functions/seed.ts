@@ -1,19 +1,20 @@
-import {
-  FamilyMember,
-  ShoppingItem,
-  CalendarEvent,
-  FeedPost,
-  SubscriptionStatus,
-  GooglePlayProduct
-} from './types';
+import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
+import { saveItem, queryItems, deleteItemById } from '../shared/db';
+import { FamilyMember, ShoppingItem, CalendarEvent, FeedPost, SubscriptionStatus } from '../shared/types';
 
-export const INITIAL_MEMBERS: FamilyMember[] = [
+function getRelativeDateStr(offsetDays: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  return d.toISOString().split('T')[0];
+}
+
+export const SEED_MEMBERS: FamilyMember[] = [
   {
     id: 'mem_1',
     name: 'Mama Lisa',
     role: 'admin',
     avatar: '👩‍💼',
-    color: '#EC4899', // Pink
+    color: '#EC4899',
     status: 'home',
     statusMessage: 'Zuhause im Homeoffice',
     locationShared: true,
@@ -24,7 +25,7 @@ export const INITIAL_MEMBERS: FamilyMember[] = [
     name: 'Papa Thomas',
     role: 'admin',
     avatar: '👨‍💻',
-    color: '#3B82F6', // Blue
+    color: '#3B82F6',
     status: 'work',
     statusMessage: 'Im Büro bis 17:00',
     locationShared: true,
@@ -35,7 +36,7 @@ export const INITIAL_MEMBERS: FamilyMember[] = [
     name: 'Mia',
     role: 'child',
     avatar: '👧',
-    color: '#8B5CF6', // Purple
+    color: '#8B5CF6',
     status: 'school',
     statusMessage: 'In der Schule',
     locationShared: true,
@@ -46,7 +47,7 @@ export const INITIAL_MEMBERS: FamilyMember[] = [
     name: 'Jonas',
     role: 'child',
     avatar: '👦',
-    color: '#10B981', // Emerald
+    color: '#10B981',
     status: 'home',
     statusMessage: 'Zuhause & Hausaufgaben',
     locationShared: true,
@@ -54,7 +55,7 @@ export const INITIAL_MEMBERS: FamilyMember[] = [
   }
 ];
 
-export const INITIAL_SHOPPING_ITEMS: ShoppingItem[] = [
+export const SEED_SHOPPING_ITEMS: ShoppingItem[] = [
   {
     id: 'shop_1',
     title: 'Bio-Eier (Freilandhaltung)',
@@ -63,7 +64,7 @@ export const INITIAL_SHOPPING_ITEMS: ShoppingItem[] = [
     unit: 'Stk',
     assignedMemberId: 'mem_2',
     completed: false,
-    createdAt: new Date(Date.now() - 3600000 * 2).toISOString()
+    createdAt: new Date().toISOString()
   },
   {
     id: 'shop_2',
@@ -73,7 +74,7 @@ export const INITIAL_SHOPPING_ITEMS: ShoppingItem[] = [
     unit: 'L',
     assignedMemberId: 'mem_1',
     completed: false,
-    createdAt: new Date(Date.now() - 3600000 * 5).toISOString()
+    createdAt: new Date().toISOString()
   },
   {
     id: 'shop_3',
@@ -83,7 +84,7 @@ export const INITIAL_SHOPPING_ITEMS: ShoppingItem[] = [
     unit: 'kg',
     assignedMemberId: 'mem_2',
     completed: false,
-    createdAt: new Date(Date.now() - 3600000 * 8).toISOString()
+    createdAt: new Date().toISOString()
   },
   {
     id: 'shop_4',
@@ -93,7 +94,7 @@ export const INITIAL_SHOPPING_ITEMS: ShoppingItem[] = [
     unit: 'Laib',
     assignedMemberId: 'mem_2',
     completed: false,
-    createdAt: new Date(Date.now() - 3600000 * 12).toISOString()
+    createdAt: new Date().toISOString()
   },
   {
     id: 'shop_5',
@@ -103,7 +104,7 @@ export const INITIAL_SHOPPING_ITEMS: ShoppingItem[] = [
     unit: 'Tuben',
     assignedMemberId: 'mem_3',
     completed: false,
-    createdAt: new Date(Date.now() - 3600000 * 24).toISOString()
+    createdAt: new Date().toISOString()
   },
   {
     id: 'shop_6',
@@ -113,7 +114,7 @@ export const INITIAL_SHOPPING_ITEMS: ShoppingItem[] = [
     unit: 'Kasten',
     assignedMemberId: 'mem_2',
     completed: false,
-    createdAt: new Date(Date.now() - 3600000 * 30).toISOString()
+    createdAt: new Date().toISOString()
   },
   {
     id: 'shop_7',
@@ -124,19 +125,12 @@ export const INITIAL_SHOPPING_ITEMS: ShoppingItem[] = [
     assignedMemberId: 'mem_1',
     completed: true,
     completedBy: 'Mama Lisa',
-    completedAt: new Date(Date.now() - 3600000).toISOString(),
-    createdAt: new Date(Date.now() - 3600000 * 48).toISOString()
+    completedAt: new Date().toISOString(),
+    createdAt: new Date().toISOString()
   }
 ];
 
-// Helper to get formatted relative dates
-export function getRelativeDateStr(offsetDays: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() + offsetDays);
-  return d.toISOString().split('T')[0];
-}
-
-export const INITIAL_CALENDAR_EVENTS: CalendarEvent[] = [
+export const SEED_CALENDAR_EVENTS: CalendarEvent[] = [
   {
     id: 'cal_1',
     title: 'Fußballtraining Jonas',
@@ -199,7 +193,7 @@ export const INITIAL_CALENDAR_EVENTS: CalendarEvent[] = [
   }
 ];
 
-export const INITIAL_FEED_POSTS: FeedPost[] = [
+export const SEED_FEED_POSTS: FeedPost[] = [
   {
     id: 'post_1',
     authorId: 'mem_1',
@@ -228,15 +222,7 @@ export const INITIAL_FEED_POSTS: FeedPost[] = [
     timestamp: new Date(Date.now() - 3600000 * 1).toISOString(),
     reactions: {
       '👍': ['mem_1']
-    },
-    comments: [
-      {
-        id: 'comm_2',
-        authorId: 'mem_1',
-        content: 'Bring bitte noch eine Packung Butter mit!',
-        timestamp: new Date(Date.now() - 1800000).toISOString()
-      }
-    ]
+    }
   },
   {
     id: 'post_3',
@@ -251,61 +237,56 @@ export const INITIAL_FEED_POSTS: FeedPost[] = [
   }
 ];
 
-export const INITIAL_SUBSCRIPTION: SubscriptionStatus = {
-  tier: 'free',
-  active: true,
-  features: [
-    'Basis-Familienkalender',
-    'Gemeinsame Einkaufsliste',
-    'Familien-Feed & Pinnwand',
-    '50 KI-Sprachbefehle pro Monat'
-  ],
-  lastVerifiedAt: new Date().toISOString()
-};
-
-export const PLAY_PRODUCTS: GooglePlayProduct[] = [
-  {
-    id: 'homepulse_family_monthly',
-    title: 'HomePulse Family Plus (Monatlich)',
-    description: 'Voller Zugriff auf alle Premium-Features für die ganze Familie.',
-    price: '3,99 € / Monat',
-    type: 'subs',
-    billingPeriod: 'P1M',
-    features: [
-      'Unbegrenzte KI-Sprach- & Textbefehle',
-      'Google / Gmail Kalender 2-Wege Synchronisation',
-      'Smarter Rezept- & Mahlzeitenplaner',
-      'Unbegrenzte Haushaltsmitglieder',
-      'Automatische Push-Benachrichtigungen',
-      'Echtzeit-Synchronisierung auf allen Geräten'
-    ]
-  },
-  {
-    id: 'homepulse_family_yearly',
-    title: 'HomePulse Family Plus (Jährlich)',
-    description: 'Spare über 30% mit dem Jahresabo für den gesamten Haushalt.',
-    price: '29,99 € / Jahr',
-    type: 'subs',
-    billingPeriod: 'P1Y',
-    features: [
-      'Alle Vorteile von Family Plus',
-      'Google Kalender Synchronisation',
-      '30% Ersparnis gegenüber monatlicher Abrechnung',
-      'Priorisierter KI-Server-Zugang',
-      'Exklusive Familien-Widgets'
-    ]
-  },
-  {
-    id: 'homepulse_lifetime',
-    title: 'HomePulse Lifetime Family Pass',
-    description: 'Einmal zahlen, für immer werbefrei und unbegrenzt nutzen.',
-    price: '69,99 € einmalig',
-    type: 'inapp',
-    billingPeriod: 'lifetime',
-    features: [
-      'Lebenslanger Zugriff ohne wiederkehrende Abokosten',
-      'Alle zukünftigen Pro-Features inklusive',
-      'VIP-Support für die Familie'
-    ]
+export async function seedDatabase() {
+  for (const m of SEED_MEMBERS) {
+    await saveItem('members', m);
   }
-];
+  for (const s of SEED_SHOPPING_ITEMS) {
+    await saveItem('shopping', s);
+  }
+  for (const c of SEED_CALENDAR_EVENTS) {
+    await saveItem('calendar', c);
+  }
+  for (const f of SEED_FEED_POSTS) {
+    await saveItem('feed', f);
+  }
+}
+
+export async function seedHandler(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
+  const headers = {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+  };
+
+  if (req.method === 'OPTIONS') {
+    return { status: 204, headers };
+  }
+
+  try {
+    await seedDatabase();
+    return {
+      status: 200,
+      headers,
+      body: JSON.stringify({
+        success: true,
+        message: 'HomePulse Beispieldaten erfolgreich in Cosmos DB initialisiert!'
+      })
+    };
+  } catch (error: any) {
+    context.error('Error seeding database:', error);
+    return {
+      status: 500,
+      headers,
+      body: JSON.stringify({ error: error.message || 'Internal Server Error' })
+    };
+  }
+}
+
+app.http('seed', {
+  methods: ['GET', 'POST', 'OPTIONS'],
+  authLevel: 'anonymous',
+  route: 'seed',
+  handler: seedHandler
+});

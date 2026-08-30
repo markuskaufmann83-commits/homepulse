@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { FeedPost, FamilyMember, FeedPostType } from '../lib/types';
+import { FeedPost, FamilyMember, FeedPostType, MemberStatus } from '../lib/types';
 import { Api } from '../lib/api';
 import { getCurrentUser } from '../lib/storage';
 import {
@@ -17,8 +17,12 @@ import {
   Navigation,
   Briefcase,
   GraduationCap,
-  Home
+  Home,
+  MessageCircle,
+  Filter,
+  Check
 } from 'lucide-react';
+import confetti from 'canvas-confetti';
 
 const EMOJI_OPTIONS = ['❤️', '👍', '😋', '🎉', '🚗', '☕'];
 
@@ -31,6 +35,13 @@ export const FamilyFeed: React.FC = () => {
   const [newContent, setNewContent] = useState('');
   const [postType, setPostType] = useState<FeedPostType>('note');
   const [isPinned, setIsPinned] = useState(false);
+
+  // Filter
+  const [filterType, setFilterType] = useState<string>('all');
+
+  // Comment input per post
+  const [activeCommentPostId, setActiveCommentPostId] = useState<string | null>(null);
+  const [commentText, setCommentText] = useState('');
 
   const loadData = async () => {
     const [fetchedPosts, fetchedMembers] = await Promise.all([
@@ -71,18 +82,26 @@ export const FamilyFeed: React.FC = () => {
     await loadData();
   };
 
+  const handleAddComment = async (postId: string, e: React.FormEvent) => {
+    e.preventDefault();
+    if (!commentText.trim() || !currentUser) return;
+
+    await Api.addFeedComment(postId, commentText.trim(), currentUser.id);
+    setCommentText('');
+    setActiveCommentPostId(null);
+    await loadData();
+  };
+
   const handleDeletePost = async (id: string) => {
-    // Local deletion
-    await Api.getFeedPosts(); // sync
+    await Api.getFeedPosts();
     const remaining = posts.filter(p => p.id !== id);
     setPosts(remaining);
-    // Persist
     const { saveFeedPosts } = await import('../lib/storage');
     saveFeedPosts(remaining);
   };
 
   // Fast status updates
-  const handleQuickStatus = async (status: 'home' | 'away' | 'work' | 'school', message: string, emoji: string) => {
+  const handleQuickStatus = async (status: MemberStatus, message: string, emoji: string) => {
     if (!currentUser) return;
     const updated = {
       ...currentUser,
@@ -96,6 +115,9 @@ export const FamilyFeed: React.FC = () => {
       type: 'status',
       authorId: currentUser.id
     });
+    try {
+      confetti({ particleCount: 25, spread: 35, origin: { y: 0.85 } });
+    } catch {}
     await loadData();
   };
 
@@ -111,6 +133,12 @@ export const FamilyFeed: React.FC = () => {
     if (diffMins < 1440) return `vor ${Math.floor(diffMins / 60)} Std.`;
     return date.toLocaleDateString('de-DE', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
   };
+
+  // Filtered posts
+  const filteredPosts = posts.filter(p => {
+    if (filterType === 'all') return true;
+    return p.type === filterType;
+  });
 
   return (
     <div className="space-y-6">
@@ -221,9 +249,36 @@ export const FamilyFeed: React.FC = () => {
         </form>
       </div>
 
+      {/* Filter Chips */}
+      <div className="flex items-center gap-2 px-1">
+        <span className="text-xs text-slate-400 flex items-center gap-1">
+          <Filter className="w-3.5 h-3.5" />
+          <span>Ansicht:</span>
+        </span>
+        {[
+          { id: 'all', label: 'Alle Beiträge' },
+          { id: 'meal', label: '🍝 Mahlzeiten' },
+          { id: 'alert', label: '⚠️ Wichtig' },
+          { id: 'status', label: '🚗 Status' },
+          { id: 'note', label: '📝 Notizen' }
+        ].map(f => (
+          <button
+            key={f.id}
+            onClick={() => setFilterType(f.id)}
+            className={`px-3 py-1 rounded-xl text-xs font-medium border transition-all ${
+              filterType === f.id
+                ? 'bg-purple-600/30 text-purple-200 border-purple-500 font-bold'
+                : 'bg-slate-900/60 text-slate-400 border-white/5 hover:border-white/20'
+            }`}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+
       {/* Feed Posts List */}
       <div className="space-y-4">
-        {posts.map(post => {
+        {filteredPosts.map(post => {
           const author = getAuthor(post.authorId);
           return (
             <div
@@ -284,31 +339,85 @@ export const FamilyFeed: React.FC = () => {
                 {post.content}
               </p>
 
-              {/* Reactions Bar */}
-              <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-white/5">
-                {/* Active reaction buttons */}
-                {EMOJI_OPTIONS.map(emoji => {
-                  const reacts = post.reactions?.[emoji] || [];
-                  const userReacted = currentUser && reacts.includes(currentUser.id);
+              {/* Reactions Bar & Comment Trigger */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/5">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {EMOJI_OPTIONS.map(emoji => {
+                    const reacts = post.reactions?.[emoji] || [];
+                    const userReacted = currentUser && reacts.includes(currentUser.id);
 
-                  return (
-                    <button
-                      key={emoji}
-                      onClick={() => handleToggleReaction(post.id, emoji)}
-                      className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs transition-all ${
-                        userReacted
-                          ? 'bg-purple-500/25 border border-purple-500/50 text-purple-200 font-bold scale-105'
-                          : reacts.length > 0
-                          ? 'bg-white/5 border border-white/10 text-slate-300 hover:bg-white/10'
-                          : 'bg-transparent text-slate-500 hover:bg-white/5 opacity-60 hover:opacity-100'
-                      }`}
-                    >
-                      <span>{emoji}</span>
-                      {reacts.length > 0 && <span>{reacts.length}</span>}
-                    </button>
-                  );
-                })}
+                    return (
+                      <button
+                        key={emoji}
+                        onClick={() => handleToggleReaction(post.id, emoji)}
+                        className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs transition-all ${
+                          userReacted
+                            ? 'bg-purple-500/25 border border-purple-500/50 text-purple-200 font-bold scale-105'
+                            : reacts.length > 0
+                            ? 'bg-white/5 border border-white/10 text-slate-300 hover:bg-white/10'
+                            : 'bg-transparent text-slate-500 hover:bg-white/5 opacity-60 hover:opacity-100'
+                        }`}
+                      >
+                        <span>{emoji}</span>
+                        {reacts.length > 0 && <span>{reacts.length}</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <button
+                  onClick={() => setActiveCommentPostId(activeCommentPostId === post.id ? null : post.id)}
+                  className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-purple-300 transition-colors px-2 py-1 rounded-lg hover:bg-white/5"
+                >
+                  <MessageCircle className="w-3.5 h-3.5" />
+                  <span>
+                    {post.comments && post.comments.length > 0
+                      ? `${post.comments.length} Antwort${post.comments.length === 1 ? '' : 'en'}`
+                      : 'Antworten'}
+                  </span>
+                </button>
               </div>
+
+              {/* Comments Thread */}
+              {post.comments && post.comments.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-white/5 space-y-2">
+                  {post.comments.map(comm => {
+                    const commAuthor = getAuthor(comm.authorId);
+                    return (
+                      <div key={comm.id} className="flex items-start gap-2.5 bg-slate-950/40 p-2.5 rounded-xl border border-white/5 text-xs">
+                        <span className="text-base">{commAuthor?.avatar || '👤'}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-white">{commAuthor?.name || 'Jemand'}</span>
+                            <span className="text-[10px] text-slate-500">{formatTimestamp(comm.timestamp)}</span>
+                          </div>
+                          <p className="text-slate-200 mt-0.5">{comm.content}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Comment Input Box */}
+              {activeCommentPostId === post.id && (
+                <form onSubmit={e => handleAddComment(post.id, e)} className="mt-2 pt-2 border-t border-white/5 flex gap-2">
+                  <input
+                    type="text"
+                    value={commentText}
+                    onChange={e => setCommentText(e.target.value)}
+                    placeholder={`Antworten als ${currentUser?.name || 'Du'}...`}
+                    className="flex-1 px-3 py-1.5 rounded-xl bg-slate-950 border border-white/10 text-white placeholder-slate-500 text-xs focus:outline-none focus:border-purple-500/50"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!commentText.trim()}
+                    className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-40 text-white text-xs font-semibold"
+                  >
+                    Senden
+                  </button>
+                </form>
+              )}
             </div>
           );
         })}
