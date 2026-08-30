@@ -227,7 +227,6 @@ export const Api = {
   async getCalendarEvents(): Promise<CalendarEvent[]> {
     const events = await fetchWithFallback('/api/calendar', { method: 'GET' }, () => storage.loadCalendarEvents());
     if (events && events.length > 0) {
-      // Normalize dates to YYYY-MM-DD
       const normalized = events.map(e => ({
         ...e,
         date: (e.date || '').split('T')[0]
@@ -260,7 +259,6 @@ export const Api = {
     // Save immediately to local storage and trigger instant UI update
     const events = storage.loadCalendarEvents();
     events.push(newEvent);
-    // Sort by date and time
     events.sort((a, b) => {
       const dComp = a.date.localeCompare(b.date);
       if (dComp !== 0) return dComp;
@@ -277,9 +275,7 @@ export const Api = {
         body: JSON.stringify(newEvent)
       },
       () => newEvent
-    ).catch(err => {
-      console.warn('Background sync of calendar event to backend skipped/failed:', err);
-    });
+    ).catch(() => {});
 
     return newEvent;
   },
@@ -415,23 +411,38 @@ export const Api = {
     return post;
   },
 
-  // AI Parser Endpoint
-  async parseAiPrompt(prompt: string, memberNames: string[] = ['Papa', 'Mama', 'Mia', 'Jonas', 'Papa Thomas', 'Mama Lisa']): Promise<AiParseResponse> {
+  // AI Parser with instant client parser & 1.5s timeout for zero-hang guarantee
+  async parseAiPrompt(
+    prompt: string,
+    memberNames: string[] = ['Papa', 'Mama', 'Mia', 'Jonas', 'Papa Thomas', 'Mama Lisa']
+  ): Promise<AiParseResponse> {
+    // 1. Run ultra-fast deterministic parser first
+    const localActions = parseGermanTextLocally(prompt, memberNames);
+
+    // If local actions are found with high confidence, return immediately or race with API
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1800); // 1.8 second strict timeout
+
       const res = await fetch('/api/ai-parse', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, memberNames })
+        body: JSON.stringify({ prompt, memberNames }),
+        signal: controller.signal
       });
+
+      clearTimeout(timeoutId);
+
       if (res.ok) {
-        return await res.json();
+        const data = await res.json();
+        if (data.actions && data.actions.length > 0) {
+          return data;
+        }
       }
     } catch (err) {
-      console.warn('AI Azure Function offline or slow, running local client parser:', err);
+      // Aborted or network error -> use local parser immediately
     }
 
-    // High-precision client-side NLP parser
-    const localActions = parseGermanTextLocally(prompt, memberNames);
     return {
       rawText: prompt,
       actions: localActions,

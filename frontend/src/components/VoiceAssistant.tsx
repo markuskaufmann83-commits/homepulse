@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, Send, Sparkles, Check, Trash2, X, AlertCircle, ShoppingCart, Calendar, MessageSquare, UserCheck, Volume2, Edit2 } from 'lucide-react';
-import { AiAction, AiParseResponse, ShoppingCategory, MemberStatus } from '../lib/types';
+import { Mic, MicOff, Send, Sparkles, Check, Trash2, X, AlertCircle, ShoppingCart, Calendar, MessageSquare, UserCheck, Volume2 } from 'lucide-react';
+import { AiAction, AiParseResponse } from '../lib/types';
 import { Api } from '../lib/api';
 import { getTodayDateStr } from '../lib/dateUtils';
 import confetti from 'canvas-confetti';
@@ -39,6 +39,7 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({
   const [ttsEnabled, setTtsEnabled] = useState(true);
 
   const recognitionRef = useRef<any>(null);
+  const actionsContainerRef = useRef<HTMLDivElement>(null);
 
   // Initialize Web Speech API
   useEffect(() => {
@@ -136,9 +137,16 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({
 
       const count = res.actions.length;
       speakText(`Ich habe ${count} ${count === 1 ? 'Aktion' : 'Aktionen'} für dich erkannt.`);
+
+      // Auto-scroll to actions card
+      setTimeout(() => {
+        if (actionsContainerRef.current) {
+          actionsContainerRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }, 100);
     } catch (err) {
       console.error('Error parsing AI prompt:', err);
-      setFeedbackMessage('Fehler bei der KI-Analyse. Bitte nochmals versuchen.');
+      setFeedbackMessage('Fehler bei der Analyse. Bitte nochmals versuchen.');
     } finally {
       setIsLoading(false);
     }
@@ -249,7 +257,7 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({
   const samplePrompts = [
     'Setze Bio-Eier und Hafermilch auf die Einkaufsliste für Papa und trage für Freitag 16 Uhr Kindergeburtstag im Kalender ein',
     'Kauf 2kg Äpfel und Vollkornbrot für Mama',
-    'Trage für morgen um 09:00 Uhr Zahnarzttermin im Kalender ein',
+    'Trage für morgen um 15 Uhr Zahnarzttermin im Kalender ein',
     'Bin auf dem Heimweg von der Arbeit'
   ];
 
@@ -357,7 +365,7 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({
                 <button
                   onClick={() => handleProcessText()}
                   disabled={isLoading || !textInput.trim()}
-                  className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium flex items-center gap-2 transition-all shadow-md active:scale-95"
+                  className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium flex items-center gap-2 transition-all shadow-md active:scale-95 shrink-0"
                 >
                   {isLoading ? (
                     <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
@@ -398,7 +406,7 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({
 
             {/* Action Approval Card */}
             {parsedResult && editableActions.length > 0 && (
-              <div className="mt-4 pt-4 border-t border-white/10 space-y-3">
+              <div ref={actionsContainerRef} className="mt-4 pt-4 border-t border-white/10 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Sparkles className="w-4 h-4 text-emerald-400" />
