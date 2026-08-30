@@ -8,6 +8,7 @@ import {
   SubscriptionStatus
 } from './types';
 import * as storage from './storage';
+import { parseGermanTextLocally } from './nlpParser';
 
 const FORCE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK_DATA === 'true';
 
@@ -24,12 +25,10 @@ async function fetchWithFallback<T>(
     const res = await fetch(url, options);
     if (res.ok) {
       const data = (await res.json()) as T;
-      // If array is returned and not empty, or non-array
       if (Array.isArray(data)) {
         if (data.length > 0) {
           return data;
         } else if (fallbackFn) {
-          // If empty array, fallback to default initial local data
           return fallbackFn();
         }
       }
@@ -57,26 +56,31 @@ export const Api = {
 
   // Members
   async getMembers(): Promise<FamilyMember[]> {
-    return fetchWithFallback('/api/members', { method: 'GET' }, () => storage.loadMembers());
+    const mems = await fetchWithFallback('/api/members', { method: 'GET' }, () => storage.loadMembers());
+    if (mems && mems.length > 0) {
+      storage.saveMembers(mems);
+    }
+    return mems;
   },
 
   async updateMember(member: FamilyMember): Promise<FamilyMember> {
-    return fetchWithFallback(
+    const members = storage.loadMembers();
+    const idx = members.findIndex(m => m.id === member.id);
+    if (idx >= 0) members[idx] = member;
+    else members.push(member);
+    storage.saveMembers(members);
+
+    fetchWithFallback(
       '/api/members',
       {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(member)
       },
-      () => {
-        const members = storage.loadMembers();
-        const idx = members.findIndex(m => m.id === member.id);
-        if (idx >= 0) members[idx] = member;
-        else members.push(member);
-        storage.saveMembers(members);
-        return member;
-      }
-    );
+      () => member
+    ).catch(() => {});
+
+    return member;
   },
 
   async addMember(member: Partial<FamilyMember>): Promise<FamilyMember> {
@@ -92,37 +96,38 @@ export const Api = {
       updatedAt: new Date().toISOString()
     };
 
-    return fetchWithFallback(
+    const members = storage.loadMembers();
+    members.push(newM);
+    storage.saveMembers(members);
+
+    fetchWithFallback(
       '/api/members',
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newM)
       },
-      () => {
-        const members = storage.loadMembers();
-        members.push(newM);
-        storage.saveMembers(members);
-        return newM;
-      }
-    );
+      () => newM
+    ).catch(() => {});
+
+    return newM;
   },
 
   async deleteMember(id: string): Promise<boolean> {
-    return fetchWithFallback(
-      `/api/members?id=${id}`,
-      { method: 'DELETE' },
-      () => {
-        const members = storage.loadMembers().filter(m => m.id !== id);
-        storage.saveMembers(members);
-        return true;
-      }
-    );
+    const members = storage.loadMembers().filter(m => m.id !== id);
+    storage.saveMembers(members);
+
+    fetchWithFallback(`/api/members?id=${id}`, { method: 'DELETE' }, () => true).catch(() => {});
+    return true;
   },
 
   // Shopping Items
   async getShoppingItems(): Promise<ShoppingItem[]> {
-    return fetchWithFallback('/api/shopping', { method: 'GET' }, () => storage.loadShoppingItems());
+    const items = await fetchWithFallback('/api/shopping', { method: 'GET' }, () => storage.loadShoppingItems());
+    if (items && items.length > 0) {
+      storage.saveShoppingItems(items);
+    }
+    return items;
   },
 
   async addShoppingItem(item: Partial<ShoppingItem>): Promise<ShoppingItem> {
@@ -137,38 +142,40 @@ export const Api = {
       createdAt: new Date().toISOString()
     };
 
-    return fetchWithFallback(
+    const items = storage.loadShoppingItems();
+    items.unshift(newItem);
+    storage.saveShoppingItems(items);
+
+    fetchWithFallback(
       '/api/shopping',
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newItem)
       },
-      () => {
-        const items = storage.loadShoppingItems();
-        items.unshift(newItem);
-        storage.saveShoppingItems(items);
-        return newItem;
-      }
-    );
+      () => newItem
+    ).catch(() => {});
+
+    return newItem;
   },
 
   async updateShoppingItem(item: ShoppingItem): Promise<ShoppingItem> {
-    return fetchWithFallback(
+    const items = storage.loadShoppingItems();
+    const idx = items.findIndex(i => i.id === item.id);
+    if (idx >= 0) items[idx] = item;
+    storage.saveShoppingItems(items);
+
+    fetchWithFallback(
       '/api/shopping',
       {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(item)
       },
-      () => {
-        const items = storage.loadShoppingItems();
-        const idx = items.findIndex(i => i.id === item.id);
-        if (idx >= 0) items[idx] = item;
-        storage.saveShoppingItems(items);
-        return item;
-      }
-    );
+      () => item
+    ).catch(() => {});
+
+    return item;
   },
 
   async toggleShoppingItem(id: string, memberName?: string): Promise<ShoppingItem | null> {
@@ -185,59 +192,63 @@ export const Api = {
       delete item.completedAt;
     }
 
-    return fetchWithFallback(
+    storage.saveShoppingItems(items);
+
+    fetchWithFallback(
       '/api/shopping',
       {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(item)
       },
-      () => {
-        storage.saveShoppingItems(items);
-        return item;
-      }
-    );
+      () => item
+    ).catch(() => {});
+
+    return item;
   },
 
   async deleteShoppingItem(id: string): Promise<boolean> {
-    return fetchWithFallback(
-      `/api/shopping?id=${id}`,
-      { method: 'DELETE' },
-      () => {
-        const items = storage.loadShoppingItems().filter(i => i.id !== id);
-        storage.saveShoppingItems(items);
-        return true;
-      }
-    );
+    const items = storage.loadShoppingItems().filter(i => i.id !== id);
+    storage.saveShoppingItems(items);
+
+    fetchWithFallback(`/api/shopping?id=${id}`, { method: 'DELETE' }, () => true).catch(() => {});
+    return true;
   },
 
   async clearCompletedShoppingItems(): Promise<boolean> {
-    return fetchWithFallback(
-      '/api/shopping?action=clear_completed',
-      { method: 'DELETE' },
-      () => {
-        const items = storage.loadShoppingItems().filter(i => !i.completed);
-        storage.saveShoppingItems(items);
-        return true;
-      }
-    );
+    const items = storage.loadShoppingItems().filter(i => !i.completed);
+    storage.saveShoppingItems(items);
+
+    fetchWithFallback('/api/shopping?action=clear_completed', { method: 'DELETE' }, () => true).catch(() => {});
+    return true;
   },
 
   // Calendar Events
   async getCalendarEvents(): Promise<CalendarEvent[]> {
-    return fetchWithFallback('/api/calendar', { method: 'GET' }, () => storage.loadCalendarEvents());
+    const events = await fetchWithFallback('/api/calendar', { method: 'GET' }, () => storage.loadCalendarEvents());
+    if (events && events.length > 0) {
+      // Normalize dates to YYYY-MM-DD
+      const normalized = events.map(e => ({
+        ...e,
+        date: (e.date || '').split('T')[0]
+      }));
+      storage.saveCalendarEvents(normalized);
+      return normalized;
+    }
+    return storage.loadCalendarEvents();
   },
 
   async addCalendarEvent(event: Partial<CalendarEvent>): Promise<CalendarEvent> {
+    const normalizedDate = (event.date || new Date().toISOString()).split('T')[0];
     const newEvent: CalendarEvent = {
       id: event.id || `cal_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      title: event.title!,
+      title: event.title || 'Termin',
       description: event.description,
-      date: event.date!,
+      date: normalizedDate,
       time: event.time,
       endTime: event.endTime,
       location: event.location,
-      assignedMemberIds: event.assignedMemberIds || ['all'],
+      assignedMemberIds: event.assignedMemberIds && event.assignedMemberIds.length > 0 ? event.assignedMemberIds : ['all'],
       category: event.category || 'Familie',
       isAllDay: !!event.isAllDay,
       createdAt: new Date().toISOString(),
@@ -246,55 +257,71 @@ export const Api = {
       externalSource: event.externalSource || 'manual'
     };
 
-    return fetchWithFallback(
+    // Save immediately to local storage and trigger instant UI update
+    const events = storage.loadCalendarEvents();
+    events.push(newEvent);
+    // Sort by date and time
+    events.sort((a, b) => {
+      const dComp = a.date.localeCompare(b.date);
+      if (dComp !== 0) return dComp;
+      return (a.time || '').localeCompare(b.time || '');
+    });
+    storage.saveCalendarEvents(events);
+
+    // Also sync to Cosmos DB
+    fetchWithFallback(
       '/api/calendar',
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newEvent)
       },
-      () => {
-        const events = storage.loadCalendarEvents();
-        events.push(newEvent);
-        storage.saveCalendarEvents(events);
-        return newEvent;
-      }
-    );
+      () => newEvent
+    ).catch(err => {
+      console.warn('Background sync of calendar event to backend skipped/failed:', err);
+    });
+
+    return newEvent;
   },
 
   async updateCalendarEvent(event: CalendarEvent): Promise<CalendarEvent> {
-    return fetchWithFallback(
+    const normalized = {
+      ...event,
+      date: (event.date || '').split('T')[0]
+    };
+    const events = storage.loadCalendarEvents();
+    const idx = events.findIndex(e => e.id === normalized.id);
+    if (idx >= 0) events[idx] = normalized;
+    storage.saveCalendarEvents(events);
+
+    fetchWithFallback(
       '/api/calendar',
       {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(event)
+        body: JSON.stringify(normalized)
       },
-      () => {
-        const events = storage.loadCalendarEvents();
-        const idx = events.findIndex(e => e.id === event.id);
-        if (idx >= 0) events[idx] = event;
-        storage.saveCalendarEvents(events);
-        return event;
-      }
-    );
+      () => normalized
+    ).catch(() => {});
+
+    return normalized;
   },
 
   async deleteCalendarEvent(id: string): Promise<boolean> {
-    return fetchWithFallback(
-      `/api/calendar?id=${id}`,
-      { method: 'DELETE' },
-      () => {
-        const events = storage.loadCalendarEvents().filter(e => e.id !== id);
-        storage.saveCalendarEvents(events);
-        return true;
-      }
-    );
+    const events = storage.loadCalendarEvents().filter(e => e.id !== id);
+    storage.saveCalendarEvents(events);
+
+    fetchWithFallback(`/api/calendar?id=${id}`, { method: 'DELETE' }, () => true).catch(() => {});
+    return true;
   },
 
   // Feed Posts
   async getFeedPosts(): Promise<FeedPost[]> {
-    return fetchWithFallback('/api/feed', { method: 'GET' }, () => storage.loadFeedPosts());
+    const posts = await fetchWithFallback('/api/feed', { method: 'GET' }, () => storage.loadFeedPosts());
+    if (posts && posts.length > 0) {
+      storage.saveFeedPosts(posts);
+    }
+    return posts;
   },
 
   async addFeedPost(post: Partial<FeedPost>): Promise<FeedPost> {
@@ -309,20 +336,21 @@ export const Api = {
       comments: []
     };
 
-    return fetchWithFallback(
+    const posts = storage.loadFeedPosts();
+    posts.unshift(newPost);
+    storage.saveFeedPosts(posts);
+
+    fetchWithFallback(
       '/api/feed',
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newPost)
       },
-      () => {
-        const posts = storage.loadFeedPosts();
-        posts.unshift(newPost);
-        storage.saveFeedPosts(posts);
-        return newPost;
-      }
-    );
+      () => newPost
+    ).catch(() => {});
+
+    return newPost;
   },
 
   async addFeedComment(postId: string, content: string, authorId: string): Promise<FeedPost | null> {
@@ -333,24 +361,25 @@ export const Api = {
       timestamp: new Date().toISOString()
     };
 
-    return fetchWithFallback(
+    const posts = storage.loadFeedPosts();
+    const post = posts.find(p => p.id === postId);
+    if (post) {
+      if (!post.comments) post.comments = [];
+      post.comments.push(newComment);
+      storage.saveFeedPosts(posts);
+    }
+
+    fetchWithFallback(
       '/api/feed?action=comment',
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ postId, content, authorId })
       },
-      () => {
-        const posts = storage.loadFeedPosts();
-        const post = posts.find(p => p.id === postId);
-        if (post) {
-          if (!post.comments) post.comments = [];
-          post.comments.push(newComment);
-          storage.saveFeedPosts(posts);
-        }
-        return post || null;
-      }
-    );
+      () => post || null
+    ).catch(() => {});
+
+    return post || null;
   },
 
   async togglePostReaction(postId: string, emoji: string, memberId: string): Promise<FeedPost | null> {
@@ -371,22 +400,23 @@ export const Api = {
       post.reactions[emoji].push(memberId);
     }
 
-    return fetchWithFallback(
+    storage.saveFeedPosts(posts);
+
+    fetchWithFallback(
       '/api/feed',
       {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(post)
       },
-      () => {
-        storage.saveFeedPosts(posts);
-        return post;
-      }
-    );
+      () => post
+    ).catch(() => {});
+
+    return post;
   },
 
   // AI Parser Endpoint
-  async parseAiPrompt(prompt: string, memberNames: string[] = ['Papa', 'Mama', 'Mia', 'Jonas']): Promise<AiParseResponse> {
+  async parseAiPrompt(prompt: string, memberNames: string[] = ['Papa', 'Mama', 'Mia', 'Jonas', 'Papa Thomas', 'Mama Lisa']): Promise<AiParseResponse> {
     try {
       const res = await fetch('/api/ai-parse', {
         method: 'POST',
@@ -397,21 +427,15 @@ export const Api = {
         return await res.json();
       }
     } catch (err) {
-      console.warn('AI Azure Function offline, running local client parser:', err);
+      console.warn('AI Azure Function offline or slow, running local client parser:', err);
     }
 
-    // Client-side local NLP fallback simulation
+    // High-precision client-side NLP parser
+    const localActions = parseGermanTextLocally(prompt, memberNames);
     return {
       rawText: prompt,
-      actions: [
-        {
-          type: 'SHOPPING_ADD',
-          item: prompt.replace(/^(setze|kauf|pack|schreib)\s+/i, '').trim() || 'Einkaufsartikel',
-          category: 'Vorrat',
-          assignedTo: 'Papa'
-        }
-      ],
-      summary: '1 Aktion lokal erkannt (Offline-Modus)',
+      actions: localActions,
+      summary: `${localActions.length} Aktion(en) erkannt`,
       source: 'rule_based'
     };
   },

@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, Send, Sparkles, Check, Trash2, X, AlertCircle, ShoppingCart, Calendar, MessageSquare, UserCheck, Volume2 } from 'lucide-react';
+import { Mic, MicOff, Send, Sparkles, Check, Trash2, X, AlertCircle, ShoppingCart, Calendar, MessageSquare, UserCheck, Volume2, Edit2 } from 'lucide-react';
 import { AiAction, AiParseResponse, ShoppingCategory, MemberStatus } from '../lib/types';
 import { Api } from '../lib/api';
+import { getTodayDateStr } from '../lib/dateUtils';
 import confetti from 'canvas-confetti';
 
 interface VoiceAssistantProps {
@@ -165,7 +166,8 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({
       for (const action of toExecute) {
         if (action.type === 'SHOPPING_ADD') {
           const targetMember = members.find(
-            m => m.name.toLowerCase() === (action.assignedTo || '').toLowerCase()
+            m => m.name.toLowerCase() === (action.assignedTo || '').toLowerCase() ||
+                 m.name.toLowerCase().includes((action.assignedTo || '').toLowerCase())
           );
           await Api.addShoppingItem({
             title: action.item,
@@ -177,32 +179,47 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({
         } else if (action.type === 'CALENDAR_ADD') {
           let assignedIds: string[] = ['all'];
           if (action.assignedTo && action.assignedTo.toLowerCase() !== 'alle') {
-            const found = members.find(m => m.name.toLowerCase() === action.assignedTo!.toLowerCase());
+            const found = members.find(m =>
+              m.name.toLowerCase() === action.assignedTo!.toLowerCase() ||
+              m.name.toLowerCase().includes(action.assignedTo!.toLowerCase())
+            );
             if (found) assignedIds = [found.id];
           }
           await Api.addCalendarEvent({
             title: action.title,
-            date: action.date,
+            date: action.date || getTodayDateStr(),
             time: action.time,
             endTime: action.endTime,
             location: action.location,
             assignedMemberIds: assignedIds
           });
         } else if (action.type === 'FEED_POST') {
-          const author = members.find(m => m.name.toLowerCase() === (action.author || '').toLowerCase()) || members[0];
+          const author = members.find(
+            m => m.name.toLowerCase() === (action.author || '').toLowerCase() ||
+                 m.name.toLowerCase().includes((action.author || '').toLowerCase())
+          ) || members[0];
+
           await Api.addFeedPost({
             content: action.content,
             type: action.postType || 'note',
             authorId: author.id
           });
         } else if (action.type === 'STATUS_UPDATE') {
-          const member = members.find(m => m.name.toLowerCase() === action.memberName.toLowerCase());
+          const member = members.find(
+            m => m.name.toLowerCase() === action.memberName.toLowerCase() ||
+                 m.name.toLowerCase().includes(action.memberName.toLowerCase())
+          );
           if (member) {
             member.status = action.newStatus;
             if (action.statusMessage) member.statusMessage = action.statusMessage;
             await Api.updateMember(member);
           }
         }
+      }
+
+      // Immediately notify all components of data change
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('homepulse-data-change', { detail: { resource: 'all' } }));
       }
 
       // Trigger Confetti & Voice
@@ -220,7 +237,7 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({
         setOpen(false);
         setFeedbackMessage(null);
         if (onActionCompleted) onActionCompleted();
-      }, 1400);
+      }, 1200);
     } catch (err) {
       console.error('Error executing actions:', err);
       setFeedbackMessage('Fehler beim Speichern der Aktionen.');
@@ -392,7 +409,7 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({
                   </span>
                 </div>
 
-                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
                   {editableActions.map((action, idx) => (
                     <div
                       key={idx}
@@ -416,7 +433,15 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({
                               <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-semibold flex items-center gap-1">
                                 <ShoppingCart className="w-3 h-3" /> Einkauf
                               </span>
-                              <span className="font-semibold text-white">{action.item}</span>
+                              <input
+                                type="text"
+                                value={action.item}
+                                onChange={e => {
+                                  const val = e.target.value;
+                                  setEditableActions(prev => prev.map((a, i) => i === idx ? { ...a, item: val } : a));
+                                }}
+                                className="font-semibold text-white bg-transparent border-b border-white/20 focus:outline-none focus:border-emerald-400 px-1"
+                              />
                             </div>
                             <div className="flex items-center gap-3 text-slate-400 text-[11px] mt-1">
                               <span>Kategorie: <strong className="text-slate-200">{action.category || 'Sonstiges'}</strong></span>
@@ -431,11 +456,41 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({
                               <span className="px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-semibold flex items-center gap-1">
                                 <Calendar className="w-3 h-3" /> Termin
                               </span>
-                              <span className="font-semibold text-white">{action.title}</span>
+                              <input
+                                type="text"
+                                value={action.title}
+                                onChange={e => {
+                                  const val = e.target.value;
+                                  setEditableActions(prev => prev.map((a, i) => i === idx ? { ...a, title: val } : a));
+                                }}
+                                className="font-semibold text-white bg-transparent border-b border-white/20 focus:outline-none focus:border-blue-400 px-1 flex-1"
+                              />
                             </div>
-                            <div className="flex items-center gap-3 text-slate-400 text-[11px] mt-1">
-                              <span>Datum: <strong className="text-slate-200">{action.date}</strong></span>
-                              {action.time && <span>Uhrzeit: <strong className="text-slate-200">{action.time} Uhr</strong></span>}
+                            <div className="flex flex-wrap items-center gap-2 text-slate-400 text-[11px] mt-1.5">
+                              <div className="flex items-center gap-1">
+                                <span>Datum:</span>
+                                <input
+                                  type="date"
+                                  value={action.date}
+                                  onChange={e => {
+                                    const val = e.target.value;
+                                    setEditableActions(prev => prev.map((a, i) => i === idx ? { ...a, date: val } : a));
+                                  }}
+                                  className="px-1.5 py-0.5 rounded bg-slate-900 border border-white/10 text-slate-200 text-[11px] focus:outline-none"
+                                />
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <span>Uhrzeit:</span>
+                                <input
+                                  type="time"
+                                  value={action.time || '12:00'}
+                                  onChange={e => {
+                                    const val = e.target.value;
+                                    setEditableActions(prev => prev.map((a, i) => i === idx ? { ...a, time: val } : a));
+                                  }}
+                                  className="px-1.5 py-0.5 rounded bg-slate-900 border border-white/10 text-slate-200 text-[11px] focus:outline-none"
+                                />
+                              </div>
                               <span>Für: <strong className="text-slate-200">{action.assignedTo || 'Alle'}</strong></span>
                             </div>
                           </div>

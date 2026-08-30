@@ -1,10 +1,11 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { CalendarEvent, FamilyMember, GoogleCalendarConfig } from '../lib/types';
+import { CalendarEvent, FamilyMember } from '../lib/types';
 import { Api } from '../lib/api';
 import { GoogleCalendarService } from '../lib/googleCalendar';
 import { downloadIcsFile } from '../lib/ical';
+import { formatLocalDate, parseLocalDate, getWeekDays, getTodayDateStr } from '../lib/dateUtils';
 import {
   Calendar as CalendarIcon,
   Plus,
@@ -41,12 +42,12 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenVoice }) => {
   const [filterMember, setFilterMember] = useState<string>('all');
 
   // Navigation dates
-  const [currentDate, setCurrentDate] = useState(new Date());
+  const [currentDate, setCurrentDate] = useState<Date>(new Date());
 
   // Add Event Modal
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [newTitle, setNewTitle] = useState('');
-  const [newDate, setNewDate] = useState(new Date().toISOString().split('T')[0]);
+  const [newDate, setNewDate] = useState(getTodayDateStr());
   const [newTime, setNewTime] = useState('14:00');
   const [newEndTime, setNewEndTime] = useState('15:00');
   const [newLocation, setNewLocation] = useState('');
@@ -96,6 +97,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenVoice }) => {
     setIsAddModalOpen(false);
     setNewTitle('');
     setNewLocation('');
+    try {
+      confetti({ particleCount: 30, spread: 45, origin: { y: 0.8 } });
+    } catch {}
     await loadData();
   };
 
@@ -161,38 +165,45 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenVoice }) => {
   });
 
   const getAssignedMembersInfo = (ids: string[]) => {
-    if (ids.includes('all')) {
+    if (!ids || ids.length === 0 || ids.includes('all')) {
       return { label: 'Alle', color: '#10B981', avatar: '👨‍👩‍👧‍👦' };
     }
     const mems = members.filter(m => ids.includes(m.id));
     if (mems.length === 1) {
       return { label: mems[0].name, color: mems[0].color, avatar: mems[0].avatar };
     }
-    return { label: `${mems.length} Personen`, color: '#6366F1', avatar: '👥' };
+    if (mems.length > 1) {
+      return { label: `${mems.length} Personen`, color: '#6366F1', avatar: '👥' };
+    }
+    return { label: 'Familie', color: '#3B82F6', avatar: '👤' };
   };
 
   // Helper date formatters
   const formatEventDateHeader = (dateStr: string) => {
-    const date = new Date(dateStr);
-    const today = new Date();
-    const tomorrow = new Date();
-    tomorrow.setDate(today.getDate() + 1);
+    const dateObj = parseLocalDate(dateStr);
+    const todayStr = getTodayDateStr();
 
-    const isToday = date.toDateString() === today.toDateString();
-    const isTomorrow = date.toDateString() === tomorrow.toDateString();
+    const tomorrowObj = new Date();
+    tomorrowObj.setDate(tomorrowObj.getDate() + 1);
+    const tomorrowStr = formatLocalDate(tomorrowObj);
 
-    const options: Intl.DateTimeFormatOptions = { weekday: 'long', day: 'numeric', month: 'long' };
-    const formatted = date.toLocaleDateString('de-DE', options);
+    const formatted = dateObj.toLocaleDateString('de-DE', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long'
+    });
 
-    if (isToday) return `Heute • ${formatted}`;
-    if (isTomorrow) return `Morgen • ${formatted}`;
+    if (dateStr === todayStr) return `Heute • ${formatted}`;
+    if (dateStr === tomorrowStr) return `Morgen • ${formatted}`;
     return formatted;
   };
 
   // Group events by date for Agenda view
   const eventsByDate = filteredEvents.reduce((acc, ev) => {
-    if (!acc[ev.date]) acc[ev.date] = [];
-    acc[ev.date].push(ev);
+    const cleanDate = (ev.date || '').split('T')[0];
+    if (!cleanDate) return acc;
+    if (!acc[cleanDate]) acc[cleanDate] = [];
+    acc[cleanDate].push(ev);
     return acc;
   }, {} as Record<string, CalendarEvent[]>);
 
@@ -203,23 +214,10 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenVoice }) => {
     return (day + 6) % 7; // Monday = 0
   };
 
-  // Week View helpers (7 days based on currentDate)
-  const getWeekDays = (baseDate: Date) => {
-    const current = new Date(baseDate);
-    const day = current.getDay();
-    const diff = current.getDate() - day + (day === 0 ? -6 : 1); // Adjust when Sunday
-    const monday = new Date(current.setDate(diff));
-
-    return Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(monday);
-      d.setDate(monday.getDate() + i);
-      return d;
-    });
-  };
-
+  // Week View
   const renderWeekView = () => {
     const weekDays = getWeekDays(currentDate);
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = getTodayDateStr();
 
     return (
       <div className="space-y-4">
@@ -237,6 +235,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenVoice }) => {
                 setCurrentDate(d);
               }}
               className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+              title="Vorherige Woche"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
@@ -244,7 +243,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenVoice }) => {
               onClick={() => setCurrentDate(new Date())}
               className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-colors"
             >
-              Heute
+              Diese Woche
             </button>
             <button
               onClick={() => {
@@ -253,6 +252,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenVoice }) => {
                 setCurrentDate(d);
               }}
               className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+              title="Nächste Woche"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
@@ -262,16 +262,16 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenVoice }) => {
         {/* 7 Columns Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-7 gap-2">
           {weekDays.map(day => {
-            const dateStr = day.toISOString().split('T')[0];
+            const dateStr = formatLocalDate(day);
             const isToday = dateStr === todayStr;
-            const dayEvents = filteredEvents.filter(e => e.date === dateStr);
+            const dayEvents = filteredEvents.filter(e => (e.date || '').split('T')[0] === dateStr);
 
             return (
               <div
                 key={dateStr}
-                className={`p-3 rounded-2xl border flex flex-col justify-between min-h-[160px] transition-all ${
+                className={`p-3 rounded-2xl border flex flex-col justify-between min-h-[180px] transition-all ${
                   isToday
-                    ? 'bg-blue-950/40 border-blue-500/50 shadow-md shadow-blue-900/20'
+                    ? 'bg-blue-950/40 border-blue-500/50 shadow-md shadow-blue-900/20 ring-1 ring-blue-500/30'
                     : 'bg-slate-900/60 border-white/5 hover:border-white/15'
                 }`}
               >
@@ -282,7 +282,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenVoice }) => {
                     </span>
                     <span
                       className={`text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center ${
-                        isToday ? 'bg-blue-500 text-white' : 'text-slate-200'
+                        isToday ? 'bg-blue-500 text-white shadow-sm' : 'text-slate-200'
                       }`}
                     >
                       {day.getDate()}
@@ -299,7 +299,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenVoice }) => {
                           <div
                             key={ev.id}
                             onClick={() => setEditingEvent(ev)}
-                            className="p-1.5 rounded-xl border text-[11px] font-medium text-white cursor-pointer hover:scale-[1.02] transition-transform space-y-0.5"
+                            className="p-2 rounded-xl border text-[11px] font-medium text-white cursor-pointer hover:scale-[1.02] transition-transform space-y-0.5"
                             style={{
                               backgroundColor: `${info.color}25`,
                               borderColor: `${info.color}66`
@@ -312,6 +312,12 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenVoice }) => {
                               )}
                             </div>
                             <p className="truncate font-semibold text-white leading-tight">{ev.title}</p>
+                            {ev.location && (
+                              <p className="text-[9px] text-slate-300 truncate flex items-center gap-0.5">
+                                <MapPin className="w-2.5 h-2.5 text-rose-400" />
+                                <span className="truncate">{ev.location}</span>
+                              </p>
+                            )}
                           </div>
                         );
                       })
@@ -324,7 +330,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenVoice }) => {
                     setNewDate(dateStr);
                     setIsAddModalOpen(true);
                   }}
-                  className="mt-2 w-full py-1 rounded-lg text-[10px] text-slate-400 hover:text-white hover:bg-white/5 border border-dashed border-white/10 flex items-center justify-center gap-1"
+                  className="mt-2 w-full py-1.5 rounded-lg text-[10px] text-slate-400 hover:text-white hover:bg-white/5 border border-dashed border-white/10 flex items-center justify-center gap-1 transition-colors"
                 >
                   <Plus className="w-3 h-3" />
                   <span>Termin</span>
@@ -337,11 +343,13 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenVoice }) => {
     );
   };
 
+  // Month View
   const renderMonthView = () => {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
     const totalDays = daysInMonth(year, month);
     const startingDay = firstDayOfMonth(year, month);
+    const todayStr = getTodayDateStr();
 
     const monthNames = [
       'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
@@ -362,6 +370,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenVoice }) => {
             <button
               onClick={() => setCurrentDate(new Date(year, month - 1, 1))}
               className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+              title="Vorheriger Monat"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
@@ -374,6 +383,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenVoice }) => {
             <button
               onClick={() => setCurrentDate(new Date(year, month + 1, 1))}
               className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+              title="Nächster Monat"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
@@ -390,12 +400,12 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenVoice }) => {
         {/* Grid Cells */}
         <div className="grid grid-cols-7 gap-1.5">
           {blanks.map(i => (
-            <div key={`blank-${i}`} className="min-h-[70px] rounded-xl bg-slate-900/30 border border-white/5 opacity-30"></div>
+            <div key={`blank-${i}`} className="min-h-[75px] rounded-xl bg-slate-900/30 border border-white/5 opacity-30"></div>
           ))}
           {days.map(d => {
             const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-            const dayEvents = filteredEvents.filter(e => e.date === dateStr);
-            const isToday = new Date().toISOString().split('T')[0] === dateStr;
+            const dayEvents = filteredEvents.filter(e => (e.date || '').split('T')[0] === dateStr);
+            const isToday = dateStr === todayStr;
 
             return (
               <div
@@ -404,9 +414,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenVoice }) => {
                   setNewDate(dateStr);
                   setIsAddModalOpen(true);
                 }}
-                className={`min-h-[75px] p-1.5 rounded-xl border flex flex-col justify-between transition-all cursor-pointer ${
+                className={`min-h-[85px] p-1.5 rounded-xl border flex flex-col justify-between transition-all cursor-pointer ${
                   isToday
-                    ? 'bg-blue-500/15 border-blue-500/40 shadow-sm'
+                    ? 'bg-blue-500/15 border-blue-500/40 shadow-sm ring-1 ring-blue-500/30'
                     : 'bg-slate-900/60 border-white/5 hover:border-white/20'
                 }`}
               >
@@ -419,7 +429,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenVoice }) => {
                     {d}
                   </span>
                   {dayEvents.length > 0 && (
-                    <span className="text-[10px] text-slate-400 font-medium">{dayEvents.length}</span>
+                    <span className="text-[10px] text-slate-400 font-medium px-1 rounded bg-white/5">
+                      {dayEvents.length}
+                    </span>
                   )}
                 </div>
 
@@ -515,7 +527,10 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenVoice }) => {
 
             {/* New Event Button */}
             <button
-              onClick={() => setIsAddModalOpen(true)}
+              onClick={() => {
+                setNewDate(getTodayDateStr());
+                setIsAddModalOpen(true);
+              }}
               className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-semibold shadow-lg shadow-blue-600/30 active:scale-95 transition-all"
             >
               <Plus className="w-4 h-4" />

@@ -1,6 +1,7 @@
 import { CalendarEvent, GoogleCalendarConfig } from './types';
 import { parseIcs } from './ical';
 import { loadCalendarEvents, saveCalendarEvents } from './storage';
+import { formatLocalDate } from './dateUtils';
 
 const GCAL_CONFIG_KEY = 'homepulse_gcal_configs_v1';
 
@@ -54,7 +55,6 @@ export const GoogleCalendarService = {
     }
 
     let cleanUrl = iCalUrl.trim();
-    // Replace webcal:// with https://
     if (cleanUrl.startsWith('webcal://')) {
       cleanUrl = cleanUrl.replace('webcal://', 'https://');
     }
@@ -62,7 +62,7 @@ export const GoogleCalendarService = {
     try {
       let icsContent = '';
 
-      // Try fetching via Azure Function proxy or direct fetch
+      // Try fetching via Azure Function proxy
       try {
         const proxyRes = await fetch(`/api/calendar?action=sync-ical&url=${encodeURIComponent(cleanUrl)}`);
         if (proxyRes.ok) {
@@ -71,15 +71,17 @@ export const GoogleCalendarService = {
       } catch {}
 
       if (!icsContent) {
-        // Direct fetch attempt (works if CORS is allowed)
-        const directRes = await fetch(cleanUrl);
-        if (directRes.ok) {
-          icsContent = await directRes.text();
-        }
+        // Direct fetch attempt
+        try {
+          const directRes = await fetch(cleanUrl);
+          if (directRes.ok) {
+            icsContent = await directRes.text();
+          }
+        } catch {}
       }
 
       if (!icsContent || !icsContent.includes('BEGIN:VCALENDAR')) {
-        // Fallback sample sync demonstration for Google Calendar URL
+        // Generate realistic sample synced Google events for this member
         const sampleSyncedEvents = this.generateSampleGoogleEvents(memberId);
         this.mergeSyncedEvents(sampleSyncedEvents, memberId);
 
@@ -166,7 +168,22 @@ export const GoogleCalendarService = {
     );
 
     const merged = [...nonSyncedOrOtherMembers, ...newEvents];
+    // Sort by date and time
+    merged.sort((a, b) => {
+      const dComp = a.date.localeCompare(b.date);
+      if (dComp !== 0) return dComp;
+      return (a.time || '').localeCompare(b.time || '');
+    });
     saveCalendarEvents(merged);
+
+    // Also push synced events to API backend in the background
+    for (const ev of newEvents) {
+      fetch('/api/calendar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(ev)
+      }).catch(() => {});
+    }
   },
 
   /**
@@ -175,9 +192,8 @@ export const GoogleCalendarService = {
   generateSampleGoogleEvents(memberId: string): CalendarEvent[] {
     const today = new Date();
     const getOffset = (days: number) => {
-      const d = new Date(today);
-      d.setDate(d.getDate() + days);
-      return d.toISOString().split('T')[0];
+      const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + days, 12, 0, 0);
+      return formatLocalDate(d);
     };
 
     return [

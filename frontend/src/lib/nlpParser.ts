@@ -1,19 +1,13 @@
-import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
-import { AiAction, AiParseResponse, ShoppingCategory, MemberStatus } from '../shared/types';
+import { AiAction, ShoppingCategory, MemberStatus } from './types';
+import { formatLocalDate } from './dateUtils';
 
-function formatLocalDate(d: Date): string {
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-// Intelligent deterministic fallback NLP parser for German voice/text commands
-function parseGermanTextLocally(text: string, knownMembers: string[] = ['Papa', 'Mama', 'Mia', 'Jonas', 'Papa Thomas', 'Mama Lisa']): AiAction[] {
+export function parseGermanTextLocally(
+  text: string,
+  knownMembers: string[] = ['Papa', 'Mama', 'Mia', 'Jonas', 'Papa Thomas', 'Mama Lisa']
+): AiAction[] {
   const actions: AiAction[] = [];
   const clean = text.trim();
 
-  // Helper to extract assigned person if mentioned
   const findAssignedPerson = (clause: string): string | undefined => {
     for (const member of knownMembers) {
       const regex = new RegExp(`(?:für|von|mit|an)\\s+${member}`, 'i');
@@ -26,7 +20,6 @@ function parseGermanTextLocally(text: string, knownMembers: string[] = ['Papa', 
     return undefined;
   };
 
-  // Helper to categorize shopping items
   const categorizeItem = (name: string): ShoppingCategory => {
     const lower = name.toLowerCase();
     if (/milch|käse|joghurt|butter|quark|sahne|eier|bio-eier|tofu|fleisch|wurst|schinken/i.test(lower)) return 'Frische';
@@ -45,14 +38,14 @@ function parseGermanTextLocally(text: string, knownMembers: string[] = ['Papa', 
     const trimmed = clause.trim();
     if (!trimmed) continue;
 
-    // 1. Calendar match
+    // 1. Calendar match (Trage ein / Kalendereintrag / Termin / Geburtstag / Meeting / Uhr / Training / Arzt...)
     if (/kalender|termin|geburtstag|meeting|treffen|training|zahnarzt|arzt|uhr|elternabend|filmabend|eintragen/i.test(trimmed)) {
       let title = 'Termin';
       let time = '12:00';
       const today = new Date();
       let targetDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 12, 0, 0);
 
-      // Time match (e.g. "16 Uhr", "16:30", "16:00 Uhr")
+      // Time match (e.g. "16 Uhr", "16:30", "16:00 Uhr", "um 9 Uhr")
       const timeMatch = trimmed.match(/(?:um\s*)?(\d{1,2})(?::(\d{2}))?\s*(?:uhr)?/i);
       if (timeMatch && (trimmed.toLowerCase().includes('uhr') || timeMatch[0].includes('um') || timeMatch[2])) {
         const hours = timeMatch[1].padStart(2, '0');
@@ -166,131 +159,5 @@ function parseGermanTextLocally(text: string, knownMembers: string[] = ['Papa', 
     }
   }
 
-  // Fallback if no specific action was found but text exists
-  if (actions.length === 0 && clean.length > 0) {
-    actions.push({
-      type: 'SHOPPING_ADD',
-      item: clean.charAt(0).toUpperCase() + clean.slice(1),
-      category: categorizeItem(clean),
-      assignedTo: 'Alle'
-    });
-  }
-
   return actions;
 }
-
-// Call Gemini API if GEMINI_API_KEY is present
-async function parseWithGemini(promptText: string, apiKey: string): Promise<AiAction[] | null> {
-  try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-    const todayStr = formatLocalDate(new Date());
-
-    const systemInstruction = `Du bist der KI-Sprachassistent für die Familien-App 'HomePulse'.
-Heutiges Datum: ${todayStr}.
-Deine Aufgabe: Analysiere den deutschen Text und extrahiere strukturierte Aktionen als JSON-Array.
-
-Gültige Typen:
-1. SHOPPING_ADD: { "type": "SHOPPING_ADD", "item": "Bio-Eier", "category": "Frische", "quantity": 10, "unit": "Stk", "assignedTo": "Papa" }
-   Kategorien: Frische, Vorrat, Obst & Gemüse, Drogerie, Getränke, Tiefkühl, Sonstiges.
-2. CALENDAR_ADD: { "type": "CALENDAR_ADD", "title": "Kindergeburtstag", "date": "YYYY-MM-DD", "time": "16:00", "location": "Trampolinpark", "assignedTo": "Alle" }
-3. FEED_POST: { "type": "FEED_POST", "content": "Essen steht im Kühlschrank", "postType": "meal" }
-4. STATUS_UPDATE: { "type": "STATUS_UPDATE", "memberName": "Papa", "newStatus": "away", "statusMessage": "Auf dem Heimweg" }
-
-Antworte NUR mit reinem JSON-Array ohne Markdown-Backticks.`;
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              { text: systemInstruction },
-              { text: `Benutzer-Befehl: "${promptText}"` }
-            ]
-          }
-        ],
-        generationConfig: {
-          temperature: 0.1,
-          maxOutputTokens: 800
-        }
-      })
-    });
-
-    if (!response.ok) return null;
-
-    const data: any = await response.json();
-    const rawContent = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!rawContent) return null;
-
-    const cleanJson = rawContent.replace(/```json/gi, '').replace(/```/g, '').trim();
-    return JSON.parse(cleanJson) as AiAction[];
-  } catch (error) {
-    return null;
-  }
-}
-
-export async function aiParserHandler(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
-  const headers = {
-    'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization'
-  };
-
-  if (req.method === 'OPTIONS') {
-    return { status: 204, headers };
-  }
-
-  try {
-    const body = (await req.json()) as { prompt?: string; memberNames?: string[] };
-    const prompt = (body?.prompt || '').trim();
-
-    if (!prompt) {
-      return { status: 400, headers, body: JSON.stringify({ error: 'Prompt is required' }) };
-    }
-
-    const geminiKey = process.env.GEMINI_API_KEY;
-    let actions: AiAction[] | null = null;
-    let source: 'gemini' | 'openai' | 'rule_based' = 'rule_based';
-
-    if (geminiKey) {
-      actions = await parseWithGemini(prompt, geminiKey);
-      if (actions && actions.length > 0) {
-        source = 'gemini';
-      }
-    }
-
-    if (!actions || actions.length === 0) {
-      actions = parseGermanTextLocally(prompt, body.memberNames);
-      source = 'rule_based';
-    }
-
-    const response: AiParseResponse = {
-      rawText: prompt,
-      actions,
-      summary: `${actions.length} Aktion(en) erkannt`,
-      source
-    };
-
-    return {
-      status: 200,
-      headers,
-      body: JSON.stringify(response)
-    };
-  } catch (error: any) {
-    context.error('Error in aiParserHandler:', error);
-    return {
-      status: 500,
-      headers,
-      body: JSON.stringify({ error: error.message || 'Internal Server Error' })
-    };
-  }
-}
-
-app.http('ai-parse', {
-  methods: ['POST', 'OPTIONS'],
-  authLevel: 'anonymous',
-  route: 'ai-parse',
-  handler: aiParserHandler
-});
