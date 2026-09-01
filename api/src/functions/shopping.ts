@@ -31,7 +31,7 @@ export async function shoppingHandler(req: HttpRequest, context: InvocationConte
     if (method === 'GET') {
       const allItems = await queryItems<ShoppingItem>(CONTAINER);
       const filtered = allItems.filter(
-        i => !i.householdId || i.householdId === householdId
+        i => i.householdId === householdId
       );
       return { status: 200, headers, body: JSON.stringify(filtered) };
     }

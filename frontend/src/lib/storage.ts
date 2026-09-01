@@ -14,33 +14,62 @@ import {
   INITIAL_SUBSCRIPTION
 } from './mockData';
 
-const CURRENT_STORAGE_VERSION = 'v3_clean_auth';
+const CURRENT_STORAGE_VERSION = 'v4_clean_production';
 
 const KEYS = {
   STORAGE_VERSION: 'homepulse_version',
-  AUTH_SESSION: 'homepulse_auth_session_v3',
-  MEMBERS: 'homepulse_members_v3',
-  SHOPPING: 'homepulse_shopping_v3',
-  CALENDAR: 'homepulse_calendar_v3',
-  FEED: 'homepulse_feed_v3',
-  SUBSCRIPTION: 'homepulse_subscription_v3',
-  CURRENT_USER_ID: 'homepulse_current_user_v3'
+  AUTH_SESSION: 'homepulse_auth_session_v4',
+  MEMBERS: 'homepulse_members_v4',
+  SHOPPING: 'homepulse_shopping_v4',
+  CALENDAR: 'homepulse_calendar_v4',
+  FEED: 'homepulse_feed_v4',
+  SUBSCRIPTION: 'homepulse_subscription_v4',
+  CURRENT_USER_ID: 'homepulse_current_user_v4'
 };
 
-// Automatic one-time purge of legacy demo cache
+// Automatic one-time purge of legacy demo cache while preserving active user login
 export function checkAndPurgeLegacyCache() {
   if (typeof window === 'undefined') return;
   try {
     const version = localStorage.getItem(KEYS.STORAGE_VERSION);
     if (version !== CURRENT_STORAGE_VERSION) {
+      // Find existing auth session from v2 or v3
+      let existingSession: string | null = null;
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.includes('auth_session')) {
+          existingSession = localStorage.getItem(k);
+          break;
+        }
+      }
+
+      // Clear all legacy storage keys
       const keysToRemove: string[] = [];
       for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
-        if (k && k.startsWith('homepulse_') && k !== KEYS.STORAGE_VERSION) {
+        if (k && k.startsWith('homepulse_')) {
           keysToRemove.push(k);
         }
       }
       keysToRemove.forEach(k => localStorage.removeItem(k));
+
+      // Restore clean user session if existed
+      if (existingSession) {
+        localStorage.setItem(KEYS.AUTH_SESSION, existingSession);
+        try {
+          const parsed: AuthSession = JSON.parse(existingSession);
+          if (parsed.member) {
+            localStorage.setItem(KEYS.MEMBERS, JSON.stringify([parsed.member]));
+            localStorage.setItem(KEYS.CURRENT_USER_ID, parsed.member.id);
+          }
+        } catch {}
+      }
+
+      // Explicitly initialize clean empty lists
+      localStorage.setItem(KEYS.SHOPPING, JSON.stringify([]));
+      localStorage.setItem(KEYS.CALENDAR, JSON.stringify([]));
+      localStorage.setItem(KEYS.FEED, JSON.stringify([]));
+
       localStorage.setItem(KEYS.STORAGE_VERSION, CURRENT_STORAGE_VERSION);
     }
   } catch {}

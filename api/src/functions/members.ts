@@ -32,7 +32,7 @@ export async function membersHandler(req: HttpRequest, context: InvocationContex
       const allMembers = await queryItems<FamilyMember>(CONTAINER);
       // Filter by household
       const filtered = allMembers.filter(
-        m => !m.householdId || m.householdId === householdId
+        m => m.householdId === householdId
       );
       return { status: 200, headers, body: JSON.stringify(filtered) };
     }

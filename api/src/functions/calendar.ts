@@ -53,7 +53,7 @@ export async function calendarHandler(req: HttpRequest, context: InvocationConte
 
       const allItems = await queryItems<CalendarEvent>(CONTAINER);
       const filtered = allItems.filter(
-        e => !e.householdId || e.householdId === householdId
+        e => e.householdId === householdId
       );
 
       // Sort by date and time

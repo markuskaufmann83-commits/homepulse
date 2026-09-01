@@ -31,7 +31,7 @@ export async function feedHandler(req: HttpRequest, context: InvocationContext):
     if (method === 'GET') {
       const allItems = await queryItems<FeedPost>(CONTAINER);
       const filtered = allItems.filter(
-        p => !p.householdId || p.householdId === householdId
+        p => p.householdId === householdId
       );
 
       // Sort pinned first, then by timestamp desc
