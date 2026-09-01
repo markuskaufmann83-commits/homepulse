@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { FamilyMember, SubscriptionStatus, MemberStatus, Household, User } from '../lib/types';
+import { FamilyMember, SubscriptionStatus, MemberStatus, Household, User, AuthSession } from '../lib/types';
 import { getCurrentUser, setCurrentUser, loadMembers, loadSubscription, getAuthSession } from '../lib/storage';
 import { AuthService } from '../lib/auth';
 import { Api } from '../lib/api';
@@ -32,7 +32,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPremium, onNavigateTab, on
   const [currentUser, setCurrentUserState] = useState<FamilyMember | null>(null);
   const [subscription, setSubscription] = useState<SubscriptionStatus | null>(null);
   const [household, setHousehold] = useState<Household | null>(null);
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AuthSession['user'] | null>(null);
   const [memberMenuOpen, setMemberMenuOpen] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
 

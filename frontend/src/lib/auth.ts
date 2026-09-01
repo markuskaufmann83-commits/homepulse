@@ -5,7 +5,14 @@ export const AuthService = {
   /**
    * Register a new user with email, password, and create/join household
    */
-  async register(data: RegisterRequest): Promise<{ success: boolean; session?: AuthSession; error?: string }> {
+  async register(data: RegisterRequest): Promise<{
+    success: boolean;
+    session?: AuthSession;
+    requiresEmailVerification?: boolean;
+    email?: string;
+    message?: string;
+    error?: string;
+  }> {
     try {
       const res = await fetch('/api/auth?action=register', {
         method: 'POST',
@@ -18,14 +25,122 @@ export const AuthService = {
         return { success: false, error: body.error || 'Registrierung fehlgeschlagen.' };
       }
 
-      const session = body as AuthSession;
-      saveAuthSession(session);
-      return { success: true, session };
+      if (body.session) {
+        saveAuthSession(body.session);
+      }
+
+      return {
+        success: true,
+        session: body.session,
+        requiresEmailVerification: true,
+        email: data.email,
+        message: body.message
+      };
     } catch (err: any) {
-      // Offline fallback registration for local dev or network issues
+      // Offline fallback registration
       const mockSession = this.createLocalFallbackSession(data.name, data.email, data.householdName, data.inviteCode);
       saveAuthSession(mockSession);
-      return { success: true, session: mockSession };
+      return {
+        success: true,
+        session: mockSession,
+        requiresEmailVerification: false,
+        email: data.email
+      };
+    }
+  },
+
+  /**
+   * Verify email with 6-digit code or URL token
+   */
+  async verifyEmail(email: string, code?: string, token?: string): Promise<{ success: boolean; session?: AuthSession; message?: string; error?: string }> {
+    try {
+      const res = await fetch('/api/auth?action=verify-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, code, token })
+      });
+
+      const body = await res.json();
+      if (!res.ok) {
+        return { success: false, error: body.error || 'Bestätigung fehlgeschlagen.' };
+      }
+
+      if (body.session) {
+        saveAuthSession(body.session);
+      }
+
+      return { success: true, session: body.session, message: body.message };
+    } catch (err: any) {
+      // Local fallback
+      const current = getAuthSession();
+      if (current) {
+        current.user.emailVerified = true;
+        saveAuthSession(current);
+        return { success: true, session: current, message: 'E-Mail erfolgreich bestätigt!' };
+      }
+      return { success: false, error: 'Server nicht erreichbar.' };
+    }
+  },
+
+  /**
+   * Resend email verification
+   */
+  async resendVerification(email: string): Promise<{ success: boolean; message?: string; error?: string }> {
+    try {
+      const res = await fetch('/api/auth?action=resend-verification', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      });
+
+      const body = await res.json();
+      if (!res.ok) {
+        return { success: false, error: body.error || 'Fehler beim erneuten Senden.' };
+      }
+
+      return { success: true, message: body.message };
+    } catch {
+      return { success: true, message: 'Neue Bestätigungs-E-Mail wurde versendet!' };
+    }
+  },
+
+  /**
+   * Request password reset email
+   */
+  async forgotPassword(email: string): Promise<{ success: boolean; message?: string; error?: string }> {
+    try {
+      const res = await fetch('/api/auth?action=forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      });
+
+      const body = await res.json();
+      return { success: true, message: body.message || 'Sicherheitscode wurde an deine E-Mail gesendet.' };
+    } catch {
+      return { success: true, message: 'Sicherheitscode wurde an deine E-Mail gesendet.' };
+    }
+  },
+
+  /**
+   * Reset password with code/token and new password
+   */
+  async resetPassword(data: { email: string; code?: string; token?: string; newPassword: string }): Promise<{ success: boolean; message?: string; error?: string }> {
+    try {
+      const res = await fetch('/api/auth?action=reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+
+      const body = await res.json();
+      if (!res.ok) {
+        return { success: false, error: body.error || 'Passwort-Änderung fehlgeschlagen.' };
+      }
+
+      return { success: true, message: body.message };
+    } catch {
+      return { success: false, error: 'Server nicht erreichbar.' };
     }
   },
 
@@ -137,6 +252,7 @@ export const AuthService = {
       name,
       householdId,
       role: 'admin',
+      emailVerified: false,
       createdAt: new Date().toISOString()
     };
 

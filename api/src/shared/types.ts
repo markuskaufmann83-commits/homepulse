@@ -6,6 +6,14 @@ export interface User {
   name: string;
   householdId: string;
   role: 'admin' | 'member';
+  emailVerified: boolean;
+  verificationCode?: string;
+  verificationToken?: string;
+  verificationExpiresAt?: string;
+  resetPasswordCode?: string;
+  resetPasswordToken?: string;
+  resetPasswordExpiresAt?: string;
+  passwordHash?: string;
   createdAt: string;
 }
 
@@ -65,13 +73,25 @@ export interface CalendarEvent {
   endTime?: string; // HH:mm
   location?: string;
   assignedMemberIds: string[]; // Member IDs or ['all']
-  category?: 'Familie' | 'Schule' | 'Arbeit' | 'Freizeit' | 'Arzt' | 'Sonstiges';
+  category: 'Familie' | 'Arbeit' | 'Schule' | 'Freizeit' | 'Arzt' | 'Sonstiges';
   isAllDay?: boolean;
   createdAt: string;
+  // Google Sync metadata
   isGoogleSynced?: boolean;
   googleEventId?: string;
-  externalSource?: 'google_calendar' | 'ical' | 'manual';
+  externalSource?: 'google' | 'google_calendar' | 'manual' | 'ai';
 }
+
+export interface GoogleCalendarConfig {
+  memberId: string;
+  iCalUrl?: string;
+  autoSync: boolean;
+  lastSync?: string;
+  syncStatus: 'idle' | 'syncing' | 'success' | 'error';
+  errorMessage?: string;
+}
+
+export type FeedPostType = 'photo' | 'note' | 'announcement' | 'achievement' | 'status' | 'meal' | 'alert';
 
 export interface FeedComment {
   id: string;
@@ -80,27 +100,20 @@ export interface FeedComment {
   timestamp: string;
 }
 
-export type FeedPostType = 'status' | 'note' | 'alert' | 'meal';
-
 export interface FeedPost {
   id: string;
   householdId: string;
   authorId: string;
   content: string;
+  imageUrl?: string;
   type: FeedPostType;
   timestamp: string;
+  reactions: Record<string, string[]>; // emoji -> memberIds[]
+  comments: FeedComment[];
   pinned?: boolean;
-  reactions?: Record<string, string[]>; // emoji -> array of memberIds
-  comments?: FeedComment[];
 }
 
-export interface AuthSession {
-  token: string;
-  user: User;
-  household: Household;
-  member: FamilyMember;
-}
-
+// Authentication API Types
 export interface RegisterRequest {
   email: string;
   password: string;
@@ -118,19 +131,52 @@ export interface JoinHouseholdRequest {
   inviteCode: string;
 }
 
-// Google Calendar Sync Configuration
-export interface GoogleCalendarConfig {
-  memberId: string;
-  iCalUrl?: string;
-  autoSync: boolean;
-  lastSync?: string;
-  syncStatus?: 'idle' | 'syncing' | 'success' | 'error';
-  errorMessage?: string;
+export interface AuthSession {
+  user: {
+    id: string;
+    email: string;
+    name: string;
+    householdId: string;
+    role: 'admin' | 'member';
+    emailVerified: boolean;
+  };
+  household: Household;
+  member: FamilyMember;
+  token: string;
 }
 
-// AI Voice & Text Action Types
-export type AiActionType = 'SHOPPING_ADD' | 'CALENDAR_ADD' | 'FEED_POST' | 'STATUS_UPDATE';
+export interface RegisterResponse {
+  success: boolean;
+  message: string;
+  session?: AuthSession;
+  requiresEmailVerification?: boolean;
+  email?: string;
+}
 
+export interface LoginResponse {
+  success: boolean;
+  message: string;
+  session?: AuthSession;
+}
+
+export interface VerifyEmailRequest {
+  email: string;
+  code?: string;
+  token?: string;
+}
+
+export interface ForgotPasswordRequest {
+  email: string;
+}
+
+export interface ResetPasswordRequest {
+  email: string;
+  code?: string;
+  token?: string;
+  newPassword: string;
+}
+
+// AI Action Types
 export interface ShoppingAddAction {
   type: 'SHOPPING_ADD';
   item: string;
@@ -143,8 +189,8 @@ export interface ShoppingAddAction {
 export interface CalendarAddAction {
   type: 'CALENDAR_ADD';
   title: string;
-  date: string; // YYYY-MM-DD
-  time?: string; // HH:mm
+  date: string;
+  time?: string;
   endTime?: string;
   assignedTo?: string;
   location?: string;

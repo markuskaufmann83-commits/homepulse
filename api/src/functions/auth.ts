@@ -1,7 +1,21 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
 import * as crypto from 'crypto';
 import { queryItems, saveItem, getItemById } from '../shared/db';
-import { User, Household, FamilyMember, AuthSession, RegisterRequest, LoginRequest, JoinHouseholdRequest } from '../shared/types';
+import {
+  User,
+  Household,
+  FamilyMember,
+  AuthSession,
+  RegisterRequest,
+  LoginRequest,
+  VerifyEmailRequest,
+  ForgotPasswordRequest,
+  ResetPasswordRequest
+} from '../shared/types';
+import {
+  sendWelcomeAndVerificationEmail,
+  sendPasswordResetEmail
+} from '../shared/email';
 
 const AUTH_SALT = process.env.AUTH_SECRET || 'homepulse-super-secret-salt-2026';
 
@@ -33,6 +47,14 @@ function generateInviteCode(): string {
   return `HP-${num}`;
 }
 
+function generate6DigitCode(): string {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+function generateCryptoToken(): string {
+  return crypto.randomBytes(32).toString('hex');
+}
+
 export async function authHandler(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   const method = req.method;
   const headers = {
@@ -49,7 +71,9 @@ export async function authHandler(req: HttpRequest, context: InvocationContext):
   const action = req.query.get('action') || '';
 
   try {
-    // 1. REGISTER
+    // =========================================================================
+    // 1. REGISTER (with Welcome & Email Verification dispatch)
+    // =========================================================================
     if (method === 'POST' && (action === 'register' || req.url.includes('/register'))) {
       const body = (await req.json()) as RegisterRequest;
       const email = (body.email || '').trim().toLowerCase();
@@ -106,7 +130,6 @@ export async function authHandler(req: HttpRequest, context: InvocationContext):
         const hhName = body.householdName?.trim() || `Familie ${name}`;
         let inviteCode = generateInviteCode();
 
-        // Ensure unique invite code
         const households = await queryItems<Household>('households');
         while (households.some(h => h.inviteCode === inviteCode)) {
           inviteCode = generateInviteCode();
@@ -127,13 +150,22 @@ export async function authHandler(req: HttpRequest, context: InvocationContext):
       }
       await saveItem('households', household);
 
+      // Create Verification Tokens
+      const verificationCode = generate6DigitCode();
+      const verificationToken = generateCryptoToken();
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24h
+
       // Create User
-      const newUser: User & { passwordHash: string } = {
+      const newUser: User = {
         id: userId,
         email,
         name,
         householdId: household.id,
         role: userRole,
+        emailVerified: false,
+        verificationCode,
+        verificationToken,
+        verificationExpiresAt: expiresAt,
         passwordHash: hashPassword(password),
         createdAt: new Date().toISOString()
       };
@@ -159,27 +191,273 @@ export async function authHandler(req: HttpRequest, context: InvocationContext):
       };
       await saveItem('members', newMember);
 
-      const token = generateToken(userId, household.id);
-      const userPublic: User = {
-        id: newUser.id,
-        email: newUser.email,
-        name: newUser.name,
-        householdId: newUser.householdId,
-        role: newUser.role,
-        createdAt: newUser.createdAt
-      };
+      // Trigger Welcome & Verification Email in Background
+      sendWelcomeAndVerificationEmail({
+        to: email,
+        name,
+        verificationCode,
+        verificationToken,
+        householdName: household.name,
+        inviteCode: household.inviteCode
+      }).catch(err => context.warn('Failed to send verification email:', err));
 
+      const token = generateToken(userId, household.id);
       const session: AuthSession = {
         token,
-        user: userPublic,
+        user: {
+          id: newUser.id,
+          email: newUser.email,
+          name: newUser.name,
+          householdId: newUser.householdId,
+          role: newUser.role,
+          emailVerified: false
+        },
         household,
         member: newMember
       };
 
-      return { status: 201, headers, body: JSON.stringify(session) };
+      return {
+        status: 201,
+        headers,
+        body: JSON.stringify({
+          success: true,
+          message: 'Registrierung erfolgreich! Wir haben dir eine Bestätigungs-E-Mail gesendet.',
+          session,
+          requiresEmailVerification: true,
+          email
+        })
+      };
     }
 
-    // 2. LOGIN
+    // =========================================================================
+    // 2. VERIFY EMAIL
+    // =========================================================================
+    if (method === 'POST' && action === 'verify-email') {
+      const body = (await req.json()) as VerifyEmailRequest;
+      const email = (body.email || '').trim().toLowerCase();
+      const code = (body.code || '').trim();
+      const verifyTokenStr = (body.token || '').trim();
+
+      if (!email || (!code && !verifyTokenStr)) {
+        return {
+          status: 400,
+          headers,
+          body: JSON.stringify({ error: 'E-Mail-Adresse und Bestätigungscode oder Token sind erforderlich.' })
+        };
+      }
+
+      const users = await queryItems<User>('users');
+      const user = users.find(u => u.email.toLowerCase() === email);
+
+      if (!user) {
+        return { status: 404, headers, body: JSON.stringify({ error: 'Benutzer nicht gefunden.' }) };
+      }
+
+      const isCodeValid = code && user.verificationCode === code;
+      const isTokenValid = verifyTokenStr && user.verificationToken === verifyTokenStr;
+
+      if (!isCodeValid && !isTokenValid) {
+        return {
+          status: 400,
+          headers,
+          body: JSON.stringify({ error: 'Ungültiger oder abgelaufener Bestätigungscode.' })
+        };
+      }
+
+      // Mark email as verified
+      user.emailVerified = true;
+      delete user.verificationCode;
+      delete user.verificationToken;
+      delete user.verificationExpiresAt;
+      await saveItem('users', user);
+
+      const household = await getItemById<Household>('households', user.householdId);
+      const members = await queryItems<FamilyMember>('members');
+      const member = members.find(m => m.userId === user.id || m.name === user.name);
+
+      const token = generateToken(user.id, user.householdId);
+      const session: AuthSession = {
+        token,
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          householdId: user.householdId,
+          role: user.role,
+          emailVerified: true
+        },
+        household: household || {
+          id: user.householdId,
+          name: 'Mein Haushalt',
+          inviteCode: generateInviteCode(),
+          ownerId: user.id,
+          createdAt: new Date().toISOString()
+        },
+        member: member || {
+          id: `mem_${user.id}`,
+          householdId: user.householdId,
+          name: user.name,
+          role: user.role,
+          avatar: '👤',
+          color: '#3B82F6',
+          status: 'home',
+          locationShared: true,
+          updatedAt: new Date().toISOString()
+        }
+      };
+
+      return {
+        status: 200,
+        headers,
+        body: JSON.stringify({
+          success: true,
+          message: 'E-Mail-Adresse erfolgreich bestätigt! Willkommen bei HomePulse.',
+          session
+        })
+      };
+    }
+
+    // =========================================================================
+    // 3. RESEND VERIFICATION EMAIL
+    // =========================================================================
+    if (method === 'POST' && action === 'resend-verification') {
+      const body = (await req.json()) as { email: string };
+      const email = (body.email || '').trim().toLowerCase();
+
+      const users = await queryItems<User>('users');
+      const user = users.find(u => u.email.toLowerCase() === email);
+
+      if (!user) {
+        return { status: 404, headers, body: JSON.stringify({ error: 'Benutzer nicht gefunden.' }) };
+      }
+
+      if (user.emailVerified) {
+        return { status: 200, headers, body: JSON.stringify({ message: 'Diese E-Mail-Adresse ist bereits bestätigt.' }) };
+      }
+
+      const verificationCode = generate6DigitCode();
+      const verificationToken = generateCryptoToken();
+      user.verificationCode = verificationCode;
+      user.verificationToken = verificationToken;
+      user.verificationExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+      await saveItem('users', user);
+
+      const household = await getItemById<Household>('households', user.householdId);
+
+      await sendWelcomeAndVerificationEmail({
+        to: email,
+        name: user.name,
+        verificationCode,
+        verificationToken,
+        householdName: household?.name || 'Dein Haushalt',
+        inviteCode: household?.inviteCode || 'HP-0000'
+      });
+
+      return {
+        status: 200,
+        headers,
+        body: JSON.stringify({ success: true, message: 'Neue Bestätigungs-E-Mail wurde versendet!' })
+      };
+    }
+
+    // =========================================================================
+    // 4. FORGOT PASSWORD
+    // =========================================================================
+    if (method === 'POST' && action === 'forgot-password') {
+      const body = (await req.json()) as ForgotPasswordRequest;
+      const email = (body.email || '').trim().toLowerCase();
+
+      const users = await queryItems<User>('users');
+      const user = users.find(u => u.email.toLowerCase() === email);
+
+      // Always return success for security (avoid enumeration)
+      if (user) {
+        const resetCode = generate6DigitCode();
+        const resetToken = generateCryptoToken();
+        user.resetPasswordCode = resetCode;
+        user.resetPasswordToken = resetToken;
+        user.resetPasswordExpiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1h
+        await saveItem('users', user);
+
+        sendPasswordResetEmail({
+          to: email,
+          name: user.name,
+          resetCode,
+          resetToken
+        }).catch(err => context.warn('Failed to send password reset email:', err));
+      }
+
+      return {
+        status: 200,
+        headers,
+        body: JSON.stringify({
+          success: true,
+          message: 'Falls ein Konto mit dieser E-Mail existiert, haben wir einen Code zum Zurücksetzen gesendet.'
+        })
+      };
+    }
+
+    // =========================================================================
+    // 5. RESET PASSWORD
+    // =========================================================================
+    if (method === 'POST' && action === 'reset-password') {
+      const body = (await req.json()) as ResetPasswordRequest;
+      const email = (body.email || '').trim().toLowerCase();
+      const code = (body.code || '').trim();
+      const token = (body.token || '').trim();
+      const newPassword = (body.newPassword || '').trim();
+
+      if (!email || (!code && !token) || !newPassword) {
+        return {
+          status: 400,
+          headers,
+          body: JSON.stringify({ error: 'E-Mail, Code/Token und neues Passwort sind erforderlich.' })
+        };
+      }
+
+      if (newPassword.length < 6) {
+        return {
+          status: 400,
+          headers,
+          body: JSON.stringify({ error: 'Das neue Passwort muss mindestens 6 Zeichen lang sein.' })
+        };
+      }
+
+      const users = await queryItems<User>('users');
+      const user = users.find(u => u.email.toLowerCase() === email);
+
+      if (!user) {
+        return { status: 404, headers, body: JSON.stringify({ error: 'Benutzer nicht gefunden.' }) };
+      }
+
+      const isCodeValid = code && user.resetPasswordCode === code;
+      const isTokenValid = token && user.resetPasswordToken === token;
+
+      if (!isCodeValid && !isTokenValid) {
+        return {
+          status: 400,
+          headers,
+          body: JSON.stringify({ error: 'Ungültiger oder abgelaufener Sicherheitscode.' })
+        };
+      }
+
+      // Update password
+      user.passwordHash = hashPassword(newPassword);
+      delete user.resetPasswordCode;
+      delete user.resetPasswordToken;
+      delete user.resetPasswordExpiresAt;
+      await saveItem('users', user);
+
+      return {
+        status: 200,
+        headers,
+        body: JSON.stringify({ success: true, message: 'Passwort erfolgreich geändert! Bitte melde dich an.' })
+      };
+    }
+
+    // =========================================================================
+    // 6. LOGIN
+    // =========================================================================
     if (method === 'POST' && (action === 'login' || req.url.includes('/login'))) {
       const body = (await req.json()) as LoginRequest;
       const email = (body.email || '').trim().toLowerCase();
@@ -193,7 +471,7 @@ export async function authHandler(req: HttpRequest, context: InvocationContext):
         };
       }
 
-      const users = await queryItems<User & { passwordHash: string }>('users');
+      const users = await queryItems<User>('users');
       const user = users.find(u => u.email.toLowerCase() === email);
 
       if (!user || user.passwordHash !== hashPassword(password)) {
@@ -220,18 +498,16 @@ export async function authHandler(req: HttpRequest, context: InvocationContext):
       };
 
       const token = generateToken(user.id, user.householdId);
-      const userPublic: User = {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        householdId: user.householdId,
-        role: user.role,
-        createdAt: user.createdAt
-      };
-
       const session: AuthSession = {
         token,
-        user: userPublic,
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          householdId: user.householdId,
+          role: user.role,
+          emailVerified: !!user.emailVerified
+        },
         household: household || {
           id: user.householdId,
           name: 'Mein Haushalt',
@@ -245,7 +521,9 @@ export async function authHandler(req: HttpRequest, context: InvocationContext):
       return { status: 200, headers, body: JSON.stringify(session) };
     }
 
-    // 3. GET CURRENT SESSION / ME
+    // =========================================================================
+    // 7. GET CURRENT SESSION / ME
+    // =========================================================================
     if (method === 'GET' && (action === 'me' || action === '' || req.url.includes('/me'))) {
       const authHeader = req.headers.get('authorization') || '';
       const token = authHeader.replace(/^Bearer\s+/i, '').trim();
@@ -276,7 +554,7 @@ export async function authHandler(req: HttpRequest, context: InvocationContext):
           name: user.name,
           householdId: user.householdId,
           role: user.role,
-          createdAt: user.createdAt
+          emailVerified: !!user.emailVerified
         },
         household: household || {
           id: user.householdId,
@@ -300,32 +578,6 @@ export async function authHandler(req: HttpRequest, context: InvocationContext):
       };
 
       return { status: 200, headers, body: JSON.stringify(session) };
-    }
-
-    // 4. JOIN HOUSEHOLD
-    if (method === 'POST' && (action === 'join' || req.url.includes('/join'))) {
-      const body = (await req.json()) as JoinHouseholdRequest & { userId: string };
-      const inviteCode = (body.inviteCode || '').trim().toUpperCase();
-
-      if (!inviteCode || !body.userId) {
-        return { status: 400, headers, body: JSON.stringify({ error: 'Einladungscode und Benutzer-ID erforderlich' }) };
-      }
-
-      const households = await queryItems<Household>('households');
-      const household = households.find(h => h.inviteCode.toUpperCase() === inviteCode);
-
-      if (!household) {
-        return { status: 404, headers, body: JSON.stringify({ error: 'Ungültiger Einladungscode' }) };
-      }
-
-      const user = await getItemById<User & { passwordHash: string }>('users', body.userId);
-      if (user) {
-        user.householdId = household.id;
-        user.role = 'member';
-        await saveItem('users', user);
-      }
-
-      return { status: 200, headers, body: JSON.stringify({ success: true, household }) };
     }
 
     return { status: 405, headers, body: JSON.stringify({ error: 'Method Not Allowed' }) };
