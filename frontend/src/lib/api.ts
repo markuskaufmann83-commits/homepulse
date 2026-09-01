@@ -40,12 +40,11 @@ export const Api = {
       if (res.ok) {
         const serverItems = (await res.json()) as FamilyMember[];
         if (Array.isArray(serverItems) && serverItems.length > 0) {
-          // Merge server members with local members
           const map = new Map<string, FamilyMember>();
           local.forEach(m => map.set(m.id, m));
           serverItems.forEach(m => map.set(m.id, m));
           const merged = Array.from(map.values());
-          storage.saveMembers(merged);
+          storage.saveMembers(merged, false); // Don't trigger event loop
           return merged;
         }
       }
@@ -54,7 +53,7 @@ export const Api = {
     if (local.length > 0) return local;
     if (session?.member) {
       const init = [session.member];
-      storage.saveMembers(init);
+      storage.saveMembers(init, false);
       return init;
     }
     return [];
@@ -69,7 +68,7 @@ export const Api = {
     const idx = members.findIndex(m => m.id === normalized.id);
     if (idx >= 0) members[idx] = normalized;
     else members.push(normalized);
-    storage.saveMembers(members);
+    storage.saveMembers(members, true);
 
     fetch('/api/members', {
       method: 'PUT',
@@ -98,7 +97,7 @@ export const Api = {
 
     const members = storage.loadMembers();
     members.push(newM);
-    storage.saveMembers(members);
+    storage.saveMembers(members, true);
 
     fetch('/api/members', {
       method: 'POST',
@@ -111,7 +110,7 @@ export const Api = {
 
   async deleteMember(id: string): Promise<boolean> {
     const members = storage.loadMembers().filter(m => m.id !== id);
-    storage.saveMembers(members);
+    storage.saveMembers(members, true);
 
     fetch(`/api/members?id=${id}`, {
       method: 'DELETE',
@@ -164,7 +163,7 @@ export const Api = {
             return b.createdAt.localeCompare(a.createdAt);
           });
 
-          storage.saveShoppingItems(merged);
+          storage.saveShoppingItems(merged, false); // Don't trigger event loop
           return merged;
         }
       }
@@ -189,10 +188,10 @@ export const Api = {
       updatedAt: now
     };
 
-    // Save immediately locally
+    // Save immediately locally and emit event to update UI
     const items = storage.loadShoppingItems();
     items.unshift(newItem);
-    storage.saveShoppingItems(items);
+    storage.saveShoppingItems(items, true);
 
     // Sync in background to Cosmos DB
     fetch('/api/shopping', {
@@ -211,7 +210,7 @@ export const Api = {
     const items = storage.loadShoppingItems();
     const idx = items.findIndex(i => i.id === updated.id);
     if (idx >= 0) items[idx] = updated;
-    storage.saveShoppingItems(items);
+    storage.saveShoppingItems(items, true);
 
     fetch('/api/shopping', {
       method: 'PUT',
@@ -239,7 +238,7 @@ export const Api = {
       delete item.completedAt;
     }
 
-    storage.saveShoppingItems(items);
+    storage.saveShoppingItems(items, true);
 
     fetch('/api/shopping', {
       method: 'PUT',
@@ -252,7 +251,7 @@ export const Api = {
 
   async deleteShoppingItem(id: string): Promise<boolean> {
     const items = storage.loadShoppingItems().filter(i => i.id !== id);
-    storage.saveShoppingItems(items);
+    storage.saveShoppingItems(items, true);
 
     fetch(`/api/shopping?id=${id}`, {
       method: 'DELETE',
@@ -264,7 +263,7 @@ export const Api = {
 
   async clearCompletedShoppingItems(): Promise<boolean> {
     const items = storage.loadShoppingItems().filter(i => !i.completed);
-    storage.saveShoppingItems(items);
+    storage.saveShoppingItems(items, true);
 
     fetch('/api/shopping?action=clear_completed', {
       method: 'DELETE',
@@ -311,7 +310,7 @@ export const Api = {
             return (a.time || '').localeCompare(b.time || '');
           });
 
-          storage.saveCalendarEvents(merged);
+          storage.saveCalendarEvents(merged, false); // Don't trigger event loop
           return merged;
         }
       }
@@ -348,7 +347,7 @@ export const Api = {
       if (dComp !== 0) return dComp;
       return (a.time || '').localeCompare(b.time || '');
     });
-    storage.saveCalendarEvents(events);
+    storage.saveCalendarEvents(events, true);
 
     fetch('/api/calendar', {
       method: 'POST',
@@ -367,7 +366,7 @@ export const Api = {
     const events = storage.loadCalendarEvents();
     const idx = events.findIndex(e => e.id === normalized.id);
     if (idx >= 0) events[idx] = normalized;
-    storage.saveCalendarEvents(events);
+    storage.saveCalendarEvents(events, true);
 
     fetch('/api/calendar', {
       method: 'PUT',
@@ -380,7 +379,7 @@ export const Api = {
 
   async deleteCalendarEvent(id: string): Promise<boolean> {
     const events = storage.loadCalendarEvents().filter(e => e.id !== id);
-    storage.saveCalendarEvents(events);
+    storage.saveCalendarEvents(events, true);
 
     fetch(`/api/calendar?id=${id}`, {
       method: 'DELETE',
@@ -413,7 +412,7 @@ export const Api = {
             if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
             return b.timestamp.localeCompare(a.timestamp);
           });
-          storage.saveFeedPosts(merged);
+          storage.saveFeedPosts(merged, false); // Don't trigger event loop
           return merged;
         }
       }
@@ -440,7 +439,7 @@ export const Api = {
 
     const posts = storage.loadFeedPosts();
     posts.unshift(newPost);
-    storage.saveFeedPosts(posts);
+    storage.saveFeedPosts(posts, true);
 
     fetch('/api/feed', {
       method: 'POST',
@@ -464,7 +463,7 @@ export const Api = {
     if (post) {
       if (!post.comments) post.comments = [];
       post.comments.push(newComment);
-      storage.saveFeedPosts(posts);
+      storage.saveFeedPosts(posts, true);
     }
 
     fetch('/api/feed?action=comment', {
@@ -494,7 +493,7 @@ export const Api = {
       post.reactions[emoji].push(memberId);
     }
 
-    storage.saveFeedPosts(posts);
+    storage.saveFeedPosts(posts, true);
 
     fetch('/api/feed', {
       method: 'PUT',
@@ -553,7 +552,7 @@ export const Api = {
       const res = await fetch('/api/billing', { headers: getAuthHeaders() });
       if (res.ok) {
         const sub = await res.json();
-        storage.saveSubscription(sub);
+        storage.saveSubscription(sub, false);
         return sub;
       }
     } catch {}

@@ -33,7 +33,6 @@ export function checkAndPurgeLegacyCache() {
   try {
     const version = localStorage.getItem(KEYS.STORAGE_VERSION);
     if (version !== CURRENT_STORAGE_VERSION) {
-      // Clear all legacy keys from v1 and v2
       const keysToRemove: string[] = [];
       for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
@@ -47,7 +46,6 @@ export function checkAndPurgeLegacyCache() {
   } catch {}
 }
 
-// Run check immediately
 checkAndPurgeLegacyCache();
 
 export function dispatchDataChange(resource: string) {
@@ -71,7 +69,7 @@ export function saveAuthSession(session: AuthSession) {
   if (typeof window === 'undefined') return;
   localStorage.setItem(KEYS.AUTH_SESSION, JSON.stringify(session));
   if (session.member) {
-    saveMembers([session.member]);
+    saveMembers([session.member], false);
     setCurrentUser(session.member.id);
   }
   dispatchDataChange('auth');
@@ -114,10 +112,12 @@ export function loadMembers(): FamilyMember[] {
   }
 }
 
-export function saveMembers(members: FamilyMember[]) {
+export function saveMembers(members: FamilyMember[], emitEvent = true) {
   if (typeof window === 'undefined') return;
   localStorage.setItem(KEYS.MEMBERS, JSON.stringify(members));
-  dispatchDataChange('members');
+  if (emitEvent) {
+    dispatchDataChange('members');
+  }
 }
 
 export function getCurrentUser(): FamilyMember | null {
@@ -151,10 +151,12 @@ export function loadShoppingItems(): ShoppingItem[] {
   }
 }
 
-export function saveShoppingItems(items: ShoppingItem[]) {
+export function saveShoppingItems(items: ShoppingItem[], emitEvent = true) {
   if (typeof window === 'undefined') return;
   localStorage.setItem(KEYS.SHOPPING, JSON.stringify(items));
-  dispatchDataChange('shopping');
+  if (emitEvent) {
+    dispatchDataChange('shopping');
+  }
 }
 
 // Calendar
@@ -169,10 +171,12 @@ export function loadCalendarEvents(): CalendarEvent[] {
   }
 }
 
-export function saveCalendarEvents(events: CalendarEvent[]) {
+export function saveCalendarEvents(events: CalendarEvent[], emitEvent = true) {
   if (typeof window === 'undefined') return;
   localStorage.setItem(KEYS.CALENDAR, JSON.stringify(events));
-  dispatchDataChange('calendar');
+  if (emitEvent) {
+    dispatchDataChange('calendar');
+  }
 }
 
 // Feed
@@ -187,10 +191,12 @@ export function loadFeedPosts(): FeedPost[] {
   }
 }
 
-export function saveFeedPosts(posts: FeedPost[]) {
+export function saveFeedPosts(posts: FeedPost[], emitEvent = true) {
   if (typeof window === 'undefined') return;
   localStorage.setItem(KEYS.FEED, JSON.stringify(posts));
-  dispatchDataChange('feed');
+  if (emitEvent) {
+    dispatchDataChange('feed');
+  }
 }
 
 // Subscription
@@ -208,8 +214,10 @@ export function loadSubscription(): SubscriptionStatus {
   }
 }
 
-export function saveSubscription(sub: SubscriptionStatus) {
+export function saveSubscription(sub: SubscriptionStatus, emitEvent = true) {
   if (typeof window === 'undefined') return;
   localStorage.setItem(KEYS.SUBSCRIPTION, JSON.stringify(sub));
-  dispatchDataChange('subscription');
+  if (emitEvent) {
+    dispatchDataChange('subscription');
+  }
 }

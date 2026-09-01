@@ -75,7 +75,12 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenVoice }) => {
 
   useEffect(() => {
     loadData();
-    const handleDataChange = () => loadData();
+    const handleDataChange = (e: any) => {
+      const res = e?.detail?.resource;
+      if (!res || res === 'calendar' || res === 'members' || res === 'all') {
+        loadData();
+      }
+    };
     window.addEventListener('homepulse-data-change', handleDataChange);
     return () => window.removeEventListener('homepulse-data-change', handleDataChange);
   }, []);

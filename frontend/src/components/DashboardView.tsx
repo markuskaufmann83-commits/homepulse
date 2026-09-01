@@ -53,7 +53,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   useEffect(() => {
     loadData();
-    const handleDataChange = () => loadData();
+    const handleDataChange = (e: any) => {
+      const res = e?.detail?.resource;
+      if (!res || res !== 'internal') {
+        loadData();
+      }
+    };
     window.addEventListener('homepulse-data-change', handleDataChange);
     return () => window.removeEventListener('homepulse-data-change', handleDataChange);
   }, []);
