@@ -1,6 +1,6 @@
 import { CalendarEvent, GoogleCalendarConfig } from './types';
 import { parseIcs } from './ical';
-import { loadCalendarEvents, saveCalendarEvents } from './storage';
+import { loadCalendarEvents, saveCalendarEvents, getActiveHouseholdId } from './storage';
 import { formatLocalDate } from './dateUtils';
 
 const GCAL_CONFIG_KEY = 'homepulse_gcal_configs_v1';
@@ -99,7 +99,7 @@ export const GoogleCalendarService = {
       }
 
       // Parse .ics
-      const parsedEvents = parseIcs(icsContent, memberId);
+      const parsedEvents = parseIcs(icsContent, memberId, getActiveHouseholdId());
       this.mergeSyncedEvents(parsedEvents, memberId);
 
       const config = this.getMemberConfig(memberId);
@@ -136,7 +136,7 @@ export const GoogleCalendarService = {
     memberId: string
   ): { success: boolean; count: number; message: string } {
     try {
-      const parsedEvents = parseIcs(icsText, memberId);
+      const parsedEvents = parseIcs(icsText, memberId, getActiveHouseholdId());
       if (parsedEvents.length === 0) {
         return { success: false, count: 0, message: 'Keine Termine in der .ics Datei gefunden.' };
       }
@@ -180,7 +180,7 @@ export const GoogleCalendarService = {
     for (const ev of newEvents) {
       fetch('/api/calendar', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-household-id': getActiveHouseholdId() },
         body: JSON.stringify(ev)
       }).catch(() => {});
     }
@@ -191,6 +191,7 @@ export const GoogleCalendarService = {
    */
   generateSampleGoogleEvents(memberId: string): CalendarEvent[] {
     const today = new Date();
+    const householdId = getActiveHouseholdId();
     const getOffset = (days: number) => {
       const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + days, 12, 0, 0);
       return formatLocalDate(d);
@@ -199,6 +200,7 @@ export const GoogleCalendarService = {
     return [
       {
         id: `gcal_demo_1_${Date.now()}`,
+        householdId,
         title: 'Team-Meeting (Google Kalender)',
         description: 'Wöchentliches Status-Update via Google Meet',
         date: getOffset(1),
@@ -213,6 +215,7 @@ export const GoogleCalendarService = {
       },
       {
         id: `gcal_demo_2_${Date.now()}`,
+        householdId,
         title: 'Projekt-Präsentation (Gmail/Google)',
         description: 'Vorbereitete Folien besprechen',
         date: getOffset(3),

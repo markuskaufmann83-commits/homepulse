@@ -1,4 +1,5 @@
 import { CalendarEvent } from './types';
+import { getActiveHouseholdId } from './storage';
 
 /**
  * Lightweight RFC 5545 iCalendar (.ics) Parser and Generator for Google Calendar / Gmail Sync
@@ -44,9 +45,10 @@ function parseIcsDate(dateStr: string): { date: string; time?: string; isAllDay:
 /**
  * Parses raw .ics file text into CalendarEvent array
  */
-export function parseIcs(icsText: string, assignedMemberId: string = 'all'): CalendarEvent[] {
+export function parseIcs(icsText: string, assignedMemberId: string = 'all', householdId?: string): CalendarEvent[] {
   const events: CalendarEvent[] = [];
   const lines = icsText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  const hhId = householdId || getActiveHouseholdId();
 
   // Unfold lines (lines starting with space or tab are continuations)
   const unfolded: string[] = [];
@@ -69,6 +71,7 @@ export function parseIcs(icsText: string, assignedMemberId: string = 'all'): Cal
       inEvent = true;
       currentEvent = {
         id: '',
+        householdId: hhId,
         title: 'Termin',
         assignedMemberIds: [assignedMemberId],
         category: 'Freizeit',
@@ -84,6 +87,7 @@ export function parseIcs(icsText: string, assignedMemberId: string = 'all'): Cal
       inEvent = false;
       if (currentEvent.title && currentEvent.date) {
         currentEvent.id = uid ? `gcal_${uid.replace(/[^a-zA-Z0-9_-]/g, '_')}` : `gcal_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+        currentEvent.householdId = hhId;
         events.push(currentEvent as CalendarEvent);
       }
       continue;
