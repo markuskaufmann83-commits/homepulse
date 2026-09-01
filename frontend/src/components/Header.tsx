@@ -1,24 +1,47 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { FamilyMember, SubscriptionStatus, MemberStatus } from '../lib/types';
-import { getCurrentUser, setCurrentUser, loadMembers, loadSubscription } from '../lib/storage';
+import { FamilyMember, SubscriptionStatus, MemberStatus, Household, User } from '../lib/types';
+import { getCurrentUser, setCurrentUser, loadMembers, loadSubscription, getAuthSession } from '../lib/storage';
+import { AuthService } from '../lib/auth';
 import { Api } from '../lib/api';
-import { Sparkles, Check, Crown, Activity, RotateCcw, Home, Navigation, Briefcase, GraduationCap, ChevronDown } from 'lucide-react';
+import {
+  Sparkles,
+  Check,
+  Crown,
+  Activity,
+  LogOut,
+  Copy,
+  Home,
+  Navigation,
+  Briefcase,
+  GraduationCap,
+  ChevronDown,
+  KeyRound
+} from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 interface HeaderProps {
   onOpenPremium: () => void;
   onNavigateTab?: (tab: string) => void;
+  onLogout?: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ onOpenPremium, onNavigateTab }) => {
+export const Header: React.FC<HeaderProps> = ({ onOpenPremium, onNavigateTab, onLogout }) => {
   const [members, setMembers] = useState<FamilyMember[]>([]);
   const [currentUser, setCurrentUserState] = useState<FamilyMember | null>(null);
   const [subscription, setSubscription] = useState<SubscriptionStatus | null>(null);
+  const [household, setHousehold] = useState<Household | null>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [memberMenuOpen, setMemberMenuOpen] = useState(false);
+  const [copiedCode, setCopiedCode] = useState(false);
 
   const refreshData = () => {
+    const session = getAuthSession();
+    if (session) {
+      setHousehold(session.household);
+      setUser(session.user);
+    }
     const mems = loadMembers();
     setMembers(mems);
     const curr = getCurrentUser();
@@ -51,14 +74,20 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPremium, onNavigateTab }) 
     setCurrentUserState(updated);
   };
 
-  const handleResetDemoData = async () => {
-    if (confirm('Möchtest du alle Daten auf die vollständigen Standard-Beispieldaten zurücksetzen?')) {
-      await Api.seedData();
-      try {
-        confetti({ particleCount: 50, spread: 60, origin: { y: 0.5 } });
-      } catch {}
+  const handleCopyInviteCode = () => {
+    if (household?.inviteCode) {
+      navigator.clipboard.writeText(household.inviteCode);
+      setCopiedCode(true);
+      setTimeout(() => setCopiedCode(false), 2000);
+    }
+  };
+
+  const handleLogoutClick = () => {
+    if (confirm('Möchtest du dich wirklich abmelden?')) {
+      AuthService.logout();
       setMemberMenuOpen(false);
-      refreshData();
+      if (onLogout) onLogout();
+      else window.location.reload();
     }
   };
 
@@ -80,7 +109,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPremium, onNavigateTab }) 
   return (
     <header className="sticky top-0 z-30 w-full glass-panel border-b border-white/10 px-4 py-3 sm:px-6">
       <div className="max-w-7xl mx-auto flex items-center justify-between">
-        {/* Brand */}
+        {/* Brand & Household Name */}
         <div
           onClick={() => onNavigateTab && onNavigateTab('dashboard')}
           className="flex items-center gap-3 cursor-pointer group"
@@ -100,27 +129,39 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPremium, onNavigateTab }) 
                   <Crown className="w-3 h-3 text-amber-400" />
                   Family Plus
                 </span>
-              ) : (
-                <span className="hidden sm:inline-flex text-[10px] uppercase font-semibold px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  Free
-                </span>
-              )}
+              ) : null}
             </div>
-            <p className="text-[11px] text-slate-400 hidden sm:block">Familien- & Haushalts-Hub</p>
+            <p className="text-[11px] text-slate-300 font-medium hidden sm:block">
+              {household?.name || 'Mein Haushalt'}
+            </p>
           </div>
         </div>
 
-        {/* Right Section: Member Selector & Upgrade */}
-        <div className="flex items-center gap-2 sm:gap-4">
+        {/* Right Section: Invite Code, Member Selector & Upgrade */}
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* Invite Code Badge with Copy */}
+          {household?.inviteCode && (
+            <button
+              onClick={handleCopyInviteCode}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-slate-300 text-xs font-medium border border-white/10 transition-colors group"
+              title="Einladungscode für Familienmitglieder kopieren"
+            >
+              <KeyRound className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="font-mono text-[11px] font-bold text-emerald-300">{household.inviteCode}</span>
+              <span className="text-[10px] text-slate-400 hidden md:inline">
+                {copiedCode ? 'Kopiert! ✓' : 'Kopieren'}
+              </span>
+            </button>
+          )}
+
           {/* Upgrade Button if Free */}
           {subscription?.tier !== 'family_plus' && (
             <button
               onClick={onOpenPremium}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-gradient-to-r from-amber-500/20 to-amber-600/30 hover:from-amber-500/30 hover:to-amber-600/40 text-amber-300 border border-amber-500/40 transition-all shadow-sm active:scale-95"
+              className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium bg-gradient-to-r from-amber-500/20 to-amber-600/30 hover:from-amber-500/30 hover:to-amber-600/40 text-amber-300 border border-amber-500/40 transition-all shadow-sm active:scale-95"
             >
-              <Sparkles className="w-3.5 h-3.5 text-amber-400 animate-spin" style={{ animationDuration: '6s' }} />
-              <span className="hidden md:inline">Family Plus freischalten</span>
-              <span className="md:hidden">Upgrade</span>
+              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+              <span>Plus Upgrade</span>
             </button>
           )}
 
@@ -137,7 +178,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPremium, onNavigateTab }) 
                 <span>{currentUser?.avatar || '👤'}</span>
               </div>
               <div className="text-left hidden sm:block">
-                <p className="text-xs font-medium text-white leading-tight">{currentUser?.name || 'Auswählen'}</p>
+                <p className="text-xs font-medium text-white leading-tight">{currentUser?.name || user?.name || 'Profil'}</p>
                 <div className="mt-0.5">{currentUser && getStatusBadge(currentUser.status)}</div>
               </div>
               <ChevronDown className="w-4 h-4 text-slate-400" />
@@ -148,11 +189,11 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPremium, onNavigateTab }) 
                 {/* Active Member Status Switcher */}
                 <div className="px-3 py-2 border-b border-white/10">
                   <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
-                    Dein Status ({currentUser?.name}):
+                    Dein Status ({currentUser?.name || user?.name}):
                   </p>
                   <div className="grid grid-cols-2 gap-1">
                     <button
-                      onClick={() => handleQuickStatusChange('home', 'Zuhause im Homeoffice')}
+                      onClick={() => handleQuickStatusChange('home', 'Zuhause')}
                       className={`px-2 py-1 rounded-lg text-[11px] font-medium border flex items-center gap-1 ${
                         currentUser?.status === 'home'
                           ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 font-bold'
@@ -195,40 +236,50 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPremium, onNavigateTab }) 
                 </div>
 
                 {/* Profile Switcher */}
-                <div className="px-3 py-1.5 border-b border-white/10">
-                  <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Profil wechseln</p>
-                </div>
-                <div className="p-1 space-y-1">
-                  {members.map(m => (
-                    <button
-                      key={m.id}
-                      onClick={() => handleSelectMember(m.id)}
-                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-left text-xs transition-colors ${
-                        currentUser?.id === m.id
-                          ? 'bg-emerald-500/20 text-white font-medium border border-emerald-500/30'
-                          : 'text-slate-300 hover:bg-white/5'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <span className="text-base">{m.avatar}</span>
-                        <div>
-                          <p className="font-medium text-slate-100">{m.name}</p>
-                          <p className="text-[10px] text-slate-400">{m.statusMessage || m.status}</p>
-                        </div>
-                      </div>
-                      {currentUser?.id === m.id && <Check className="w-4 h-4 text-emerald-400" />}
-                    </button>
-                  ))}
+                {members.length > 1 && (
+                  <>
+                    <div className="px-3 py-1.5 border-b border-white/10">
+                      <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Profil wechseln</p>
+                    </div>
+                    <div className="p-1 space-y-1">
+                      {members.map(m => (
+                        <button
+                          key={m.id}
+                          onClick={() => handleSelectMember(m.id)}
+                          className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-left text-xs transition-colors ${
+                            currentUser?.id === m.id
+                              ? 'bg-emerald-500/20 text-white font-medium border border-emerald-500/30'
+                              : 'text-slate-300 hover:bg-white/5'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <span className="text-base">{m.avatar}</span>
+                            <div>
+                              <p className="font-medium text-slate-100">{m.name}</p>
+                              <p className="text-[10px] text-slate-400">{m.statusMessage || m.status}</p>
+                            </div>
+                          </div>
+                          {currentUser?.id === m.id && <Check className="w-4 h-4 text-emerald-400" />}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                {/* Household Info */}
+                <div className="px-3 py-2 border-t border-white/10 text-xs text-slate-400">
+                  <p className="text-[10px] uppercase font-bold text-slate-500">Angemeldet als:</p>
+                  <p className="text-slate-200 font-medium truncate">{user?.email}</p>
                 </div>
 
-                {/* Demo Data Reset Action */}
+                {/* Logout Action */}
                 <div className="p-1.5 border-t border-white/10">
                   <button
-                    onClick={handleResetDemoData}
-                    className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-colors"
+                    onClick={handleLogoutClick}
+                    className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 transition-colors font-medium"
                   >
-                    <RotateCcw className="w-3 h-3 text-slate-400" />
-                    <span>Beispieldaten neu laden</span>
+                    <LogOut className="w-3.5 h-3.5" />
+                    <span>Abmelden</span>
                   </button>
                 </div>
               </div>

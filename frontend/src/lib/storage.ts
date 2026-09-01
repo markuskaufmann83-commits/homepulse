@@ -3,8 +3,10 @@ import {
   ShoppingItem,
   CalendarEvent,
   FeedPost,
-  FeedComment,
-  SubscriptionStatus
+  SubscriptionStatus,
+  AuthSession,
+  User,
+  Household
 } from './types';
 import {
   INITIAL_MEMBERS,
@@ -15,12 +17,13 @@ import {
 } from './mockData';
 
 const KEYS = {
-  MEMBERS: 'homepulse_members_v1',
-  SHOPPING: 'homepulse_shopping_v1',
-  CALENDAR: 'homepulse_calendar_v1',
-  FEED: 'homepulse_feed_v1',
-  SUBSCRIPTION: 'homepulse_subscription_v1',
-  CURRENT_USER_ID: 'homepulse_current_user_v1'
+  AUTH_SESSION: 'homepulse_auth_session_v2',
+  MEMBERS: 'homepulse_members_v2',
+  SHOPPING: 'homepulse_shopping_v2',
+  CALENDAR: 'homepulse_calendar_v2',
+  FEED: 'homepulse_feed_v2',
+  SUBSCRIPTION: 'homepulse_subscription_v2',
+  CURRENT_USER_ID: 'homepulse_current_user_v2'
 };
 
 export function dispatchDataChange(resource: string) {
@@ -29,17 +32,58 @@ export function dispatchDataChange(resource: string) {
   }
 }
 
+// Auth Session Management
+export function getAuthSession(): AuthSession | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(KEYS.AUTH_SESSION);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveAuthSession(session: AuthSession) {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(KEYS.AUTH_SESSION, JSON.stringify(session));
+  if (session.member) {
+    setCurrentUser(session.member.id);
+  }
+  dispatchDataChange('auth');
+}
+
+export function clearAuthSession() {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem(KEYS.AUTH_SESSION);
+  localStorage.removeItem(KEYS.MEMBERS);
+  localStorage.removeItem(KEYS.SHOPPING);
+  localStorage.removeItem(KEYS.CALENDAR);
+  localStorage.removeItem(KEYS.FEED);
+  localStorage.removeItem(KEYS.CURRENT_USER_ID);
+  dispatchDataChange('auth');
+}
+
+export function getActiveHouseholdId(): string {
+  const session = getAuthSession();
+  return session?.household?.id || 'default_household';
+}
+
 // Members
 export function loadMembers(): FamilyMember[] {
   if (typeof window === 'undefined') return INITIAL_MEMBERS;
   try {
     const raw = localStorage.getItem(KEYS.MEMBERS);
     if (!raw) {
-      localStorage.setItem(KEYS.MEMBERS, JSON.stringify(INITIAL_MEMBERS));
+      const session = getAuthSession();
+      if (session?.member) {
+        const initial = [session.member];
+        localStorage.setItem(KEYS.MEMBERS, JSON.stringify(initial));
+        return initial;
+      }
       return INITIAL_MEMBERS;
     }
     const parsed = JSON.parse(raw);
-    return parsed.length > 0 ? parsed : INITIAL_MEMBERS;
+    return Array.isArray(parsed) ? parsed : INITIAL_MEMBERS;
   } catch {
     return INITIAL_MEMBERS;
   }
@@ -51,11 +95,11 @@ export function saveMembers(members: FamilyMember[]) {
   dispatchDataChange('members');
 }
 
-export function getCurrentUser(): FamilyMember {
+export function getCurrentUser(): FamilyMember | null {
   const members = loadMembers();
-  if (typeof window === 'undefined') return members[0];
+  if (typeof window === 'undefined') return members[0] || null;
   const currentId = localStorage.getItem(KEYS.CURRENT_USER_ID);
-  return members.find(m => m.id === currentId) || members[0] || INITIAL_MEMBERS[0];
+  return members.find(m => m.id === currentId) || members[0] || null;
 }
 
 export function setCurrentUser(memberId: string) {
@@ -69,10 +113,7 @@ export function loadShoppingItems(): ShoppingItem[] {
   if (typeof window === 'undefined') return INITIAL_SHOPPING_ITEMS;
   try {
     const raw = localStorage.getItem(KEYS.SHOPPING);
-    if (!raw) {
-      localStorage.setItem(KEYS.SHOPPING, JSON.stringify(INITIAL_SHOPPING_ITEMS));
-      return INITIAL_SHOPPING_ITEMS;
-    }
+    if (!raw) return INITIAL_SHOPPING_ITEMS;
     return JSON.parse(raw);
   } catch {
     return INITIAL_SHOPPING_ITEMS;
@@ -90,10 +131,7 @@ export function loadCalendarEvents(): CalendarEvent[] {
   if (typeof window === 'undefined') return INITIAL_CALENDAR_EVENTS;
   try {
     const raw = localStorage.getItem(KEYS.CALENDAR);
-    if (!raw) {
-      localStorage.setItem(KEYS.CALENDAR, JSON.stringify(INITIAL_CALENDAR_EVENTS));
-      return INITIAL_CALENDAR_EVENTS;
-    }
+    if (!raw) return INITIAL_CALENDAR_EVENTS;
     return JSON.parse(raw);
   } catch {
     return INITIAL_CALENDAR_EVENTS;
@@ -111,10 +149,7 @@ export function loadFeedPosts(): FeedPost[] {
   if (typeof window === 'undefined') return INITIAL_FEED_POSTS;
   try {
     const raw = localStorage.getItem(KEYS.FEED);
-    if (!raw) {
-      localStorage.setItem(KEYS.FEED, JSON.stringify(INITIAL_FEED_POSTS));
-      return INITIAL_FEED_POSTS;
-    }
+    if (!raw) return INITIAL_FEED_POSTS;
     return JSON.parse(raw);
   } catch {
     return INITIAL_FEED_POSTS;
@@ -146,14 +181,4 @@ export function saveSubscription(sub: SubscriptionStatus) {
   if (typeof window === 'undefined') return;
   localStorage.setItem(KEYS.SUBSCRIPTION, JSON.stringify(sub));
   dispatchDataChange('subscription');
-}
-
-export function resetAllToMockData() {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem(KEYS.MEMBERS, JSON.stringify(INITIAL_MEMBERS));
-  localStorage.setItem(KEYS.SHOPPING, JSON.stringify(INITIAL_SHOPPING_ITEMS));
-  localStorage.setItem(KEYS.CALENDAR, JSON.stringify(INITIAL_CALENDAR_EVENTS));
-  localStorage.setItem(KEYS.FEED, JSON.stringify(INITIAL_FEED_POSTS));
-  localStorage.setItem(KEYS.SUBSCRIPTION, JSON.stringify(INITIAL_SUBSCRIPTION));
-  dispatchDataChange('all');
 }

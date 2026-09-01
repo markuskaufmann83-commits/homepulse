@@ -1,17 +1,26 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
 import { queryItems, saveItem, deleteItemById } from '../shared/db';
 import { ShoppingItem } from '../shared/types';
-import { SEED_SHOPPING_ITEMS } from './seed';
 
 const CONTAINER = 'shopping';
 
+function getHouseholdId(req: HttpRequest): string {
+  return (
+    req.headers.get('x-household-id') ||
+    req.query.get('householdId') ||
+    'default_household'
+  );
+}
+
 export async function shoppingHandler(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   const method = req.method;
+  const householdId = getHouseholdId(req);
+
   const headers = {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-household-id'
   };
 
   if (method === 'OPTIONS') {
@@ -20,15 +29,11 @@ export async function shoppingHandler(req: HttpRequest, context: InvocationConte
 
   try {
     if (method === 'GET') {
-      let items = await queryItems<ShoppingItem>(CONTAINER);
-      if (items.length === 0) {
-        // Auto-seed initial items
-        for (const item of SEED_SHOPPING_ITEMS) {
-          await saveItem<ShoppingItem>(CONTAINER, item);
-        }
-        items = SEED_SHOPPING_ITEMS;
-      }
-      return { status: 200, headers, body: JSON.stringify(items) };
+      const allItems = await queryItems<ShoppingItem>(CONTAINER);
+      const filtered = allItems.filter(
+        i => !i.householdId || i.householdId === householdId
+      );
+      return { status: 200, headers, body: JSON.stringify(filtered) };
     }
 
     if (method === 'POST') {
@@ -39,6 +44,7 @@ export async function shoppingHandler(req: HttpRequest, context: InvocationConte
 
       const newItem: ShoppingItem = {
         id: data.id || `shop_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        householdId: data.householdId || householdId,
         title: data.title,
         category: data.category || 'Sonstiges',
         quantity: data.quantity,
@@ -60,6 +66,7 @@ export async function shoppingHandler(req: HttpRequest, context: InvocationConte
         return { status: 400, headers, body: JSON.stringify({ error: 'Item id is required for update' }) };
       }
 
+      data.householdId = data.householdId || householdId;
       const updated = await saveItem<ShoppingItem>(CONTAINER, data);
       return { status: 200, headers, body: JSON.stringify(updated) };
     }
@@ -69,7 +76,7 @@ export async function shoppingHandler(req: HttpRequest, context: InvocationConte
       if (action === 'clear_completed') {
         const items = await queryItems<ShoppingItem>(CONTAINER);
         for (const it of items) {
-          if (it.completed) {
+          if (it.completed && (!it.householdId || it.householdId === householdId)) {
             await deleteItemById(CONTAINER, it.id);
           }
         }

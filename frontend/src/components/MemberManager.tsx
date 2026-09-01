@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { FamilyMember, MemberStatus } from '../lib/types';
+import { FamilyMember, MemberStatus, Household } from '../lib/types';
 import { Api } from '../lib/api';
+import { getAuthSession } from '../lib/storage';
 import {
   Users,
   Shield,
@@ -11,24 +12,28 @@ import {
   Edit2,
   Trash2,
   Check,
-  RotateCcw,
   Sparkles,
   Home,
   Navigation,
   Briefcase,
   GraduationCap,
   Palmtree,
+  KeyRound,
+  Copy,
+  Share2,
   X
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
-const AVATAR_OPTIONS = ['👩‍💼', '👨‍💻', '👧', '👦', '👵', '👴', '🐶', '🐱', '🧑‍🎨', '👩‍🍳'];
+const AVATAR_OPTIONS = ['👩‍💼', '👨‍💻', '👧', '👦', '👵', '👴', '🐶', '🐱', '🧑‍🎨', '👩‍🍳', '🧔', '👱‍♀️'];
 const COLOR_OPTIONS = ['#EC4899', '#3B82F6', '#8B5CF6', '#10B981', '#F59E0B', '#14B8A6', '#F43F5E', '#6366F1'];
 
 export const MemberManager: React.FC = () => {
   const [members, setMembers] = useState<FamilyMember[]>([]);
+  const [household, setHousehold] = useState<Household | null>(null);
   const [editingMember, setEditingMember] = useState<FamilyMember | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [copiedCode, setCopiedCode] = useState(false);
 
   // New member form
   const [newName, setNewName] = useState('');
@@ -37,6 +42,10 @@ export const MemberManager: React.FC = () => {
   const [newColor, setNewColor] = useState('#3B82F6');
 
   const loadData = async () => {
+    const session = getAuthSession();
+    if (session) {
+      setHousehold(session.household);
+    }
     const mems = await Api.getMembers();
     setMembers(mems);
   };
@@ -109,13 +118,11 @@ export const MemberManager: React.FC = () => {
     await loadData();
   };
 
-  const handleResetData = async () => {
-    if (confirm('Möchtest du alle Daten auf die vollständigen Standard-Beispieldaten zurücksetzen?')) {
-      await Api.seedData();
-      try {
-        confetti({ particleCount: 60, spread: 70, origin: { y: 0.6 } });
-      } catch {}
-      await loadData();
+  const handleCopyCode = () => {
+    if (household?.inviteCode) {
+      navigator.clipboard.writeText(household.inviteCode);
+      setCopiedCode(true);
+      setTimeout(() => setCopiedCode(false), 2500);
     }
   };
 
@@ -144,31 +151,69 @@ export const MemberManager: React.FC = () => {
               <Users className="w-6 h-6" />
             </div>
             <div>
-              <h2 className="text-xl font-bold text-white">Familienmitglieder & Profile</h2>
-              <p className="text-xs text-slate-400">{members.length} aktive Mitglieder im Haushalt</p>
+              <h2 className="text-xl font-bold text-white">Familienmitglieder</h2>
+              <p className="text-xs text-slate-400">
+                {members.length} {members.length === 1 ? 'Mitglied' : 'Mitglieder'} in {household?.name || 'deinem Haushalt'}
+              </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 self-start sm:self-auto">
-            <button
-              onClick={handleResetData}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs border border-white/10 transition-colors"
-              title="Alle Daten auf Demo zurücksetzen"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>Demo-Daten wiederherstellen</span>
-            </button>
-
-            <button
-              onClick={() => setIsAddModalOpen(true)}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/30 active:scale-95 transition-all"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Mitglied hinzufügen</span>
-            </button>
-          </div>
+          <button
+            onClick={() => setIsAddModalOpen(true)}
+            className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/30 active:scale-95 transition-all self-start sm:self-auto"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Mitglied hinzufügen</span>
+          </button>
         </div>
       </div>
+
+      {/* Household Invite Banner */}
+      {household?.inviteCode && (
+        <div className="glass-panel rounded-3xl p-6 border border-emerald-500/30 bg-gradient-to-r from-emerald-950/40 via-slate-900/80 to-slate-900/80 shadow-xl relative overflow-hidden">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className="p-3 rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shrink-0">
+                <KeyRound className="w-6 h-6" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-bold text-white">Familienmitglieder einladen</h3>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
+                    Einladungscode
+                  </span>
+                </div>
+                <p className="text-xs text-slate-300 mt-1 max-w-xl leading-relaxed">
+                  Deine Familie (Partner, Kinder, Mitbewohner) kann sich einfach mit ihrer eigenen E-Mail-Adresse registrieren und diesen Code eingeben, um automatisch deinem Haushalt beizutreten.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 self-start md:self-auto shrink-0">
+              <div className="px-4 py-2.5 rounded-2xl bg-slate-950 border border-emerald-500/40 font-mono text-base font-black tracking-widest text-emerald-300 shadow-inner">
+                {household.inviteCode}
+              </div>
+
+              <button
+                onClick={handleCopyCode}
+                className="flex items-center gap-1.5 px-4 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg shadow-emerald-600/25 active:scale-95 transition-all"
+              >
+                {copiedCode ? (
+                  <>
+                    <Check className="w-4 h-4 text-white" />
+                    <span>Kopiert!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-4 h-4" />
+                    <span>Code kopieren</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Member Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

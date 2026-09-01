@@ -1,7 +1,26 @@
 export type MemberStatus = 'home' | 'away' | 'work' | 'school' | 'vacation';
 
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  householdId: string;
+  role: 'admin' | 'member';
+  createdAt: string;
+}
+
+export interface Household {
+  id: string;
+  name: string;
+  inviteCode: string;
+  ownerId: string;
+  createdAt: string;
+}
+
 export interface FamilyMember {
   id: string;
+  householdId: string;
+  userId?: string;
   name: string;
   role: 'admin' | 'member' | 'child';
   avatar: string; // Emoji or image URL
@@ -23,6 +42,7 @@ export type ShoppingCategory =
 
 export interface ShoppingItem {
   id: string;
+  householdId: string;
   title: string;
   category: ShoppingCategory;
   quantity?: number;
@@ -36,6 +56,7 @@ export interface ShoppingItem {
 
 export interface CalendarEvent {
   id: string;
+  householdId: string;
   title: string;
   description?: string;
   date: string; // YYYY-MM-DD
@@ -62,6 +83,7 @@ export type FeedPostType = 'status' | 'note' | 'alert' | 'meal';
 
 export interface FeedPost {
   id: string;
+  householdId: string;
   authorId: string;
   content: string;
   type: FeedPostType;
@@ -69,6 +91,30 @@ export interface FeedPost {
   pinned?: boolean;
   reactions?: Record<string, string[]>; // emoji -> array of memberIds
   comments?: FeedComment[];
+}
+
+export interface AuthSession {
+  token: string;
+  user: User;
+  household: Household;
+  member: FamilyMember;
+}
+
+export interface RegisterRequest {
+  email: string;
+  password: string;
+  name: string;
+  householdName?: string;
+  inviteCode?: string;
+}
+
+export interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+export interface JoinHouseholdRequest {
+  inviteCode: string;
 }
 
 // Google Calendar Sync Configuration

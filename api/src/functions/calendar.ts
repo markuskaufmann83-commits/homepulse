@@ -1,17 +1,26 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
 import { queryItems, saveItem, deleteItemById } from '../shared/db';
 import { CalendarEvent } from '../shared/types';
-import { SEED_CALENDAR_EVENTS } from './seed';
 
 const CONTAINER = 'calendar';
 
+function getHouseholdId(req: HttpRequest): string {
+  return (
+    req.headers.get('x-household-id') ||
+    req.query.get('householdId') ||
+    'default_household'
+  );
+}
+
 export async function calendarHandler(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   const method = req.method;
+  const householdId = getHouseholdId(req);
+
   const headers = {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-household-id'
   };
 
   if (method === 'OPTIONS') {
@@ -42,22 +51,18 @@ export async function calendarHandler(req: HttpRequest, context: InvocationConte
         }
       }
 
-      let items = await queryItems<CalendarEvent>(CONTAINER);
-      if (items.length === 0) {
-        // Auto-seed initial events
-        for (const ev of SEED_CALENDAR_EVENTS) {
-          await saveItem<CalendarEvent>(CONTAINER, ev);
-        }
-        items = SEED_CALENDAR_EVENTS;
-      }
+      const allItems = await queryItems<CalendarEvent>(CONTAINER);
+      const filtered = allItems.filter(
+        e => !e.householdId || e.householdId === householdId
+      );
 
       // Sort by date and time
-      items.sort((a, b) => {
+      filtered.sort((a, b) => {
         const dComp = a.date.localeCompare(b.date);
         if (dComp !== 0) return dComp;
         return (a.time || '').localeCompare(b.time || '');
       });
-      return { status: 200, headers, body: JSON.stringify(items) };
+      return { status: 200, headers, body: JSON.stringify(filtered) };
     }
 
     if (method === 'POST') {
@@ -68,6 +73,7 @@ export async function calendarHandler(req: HttpRequest, context: InvocationConte
 
       const newEvent: CalendarEvent = {
         id: data.id || `cal_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        householdId: data.householdId || householdId,
         title: data.title,
         description: data.description,
         date: data.date,
@@ -93,6 +99,7 @@ export async function calendarHandler(req: HttpRequest, context: InvocationConte
         return { status: 400, headers, body: JSON.stringify({ error: 'Event id is required for update' }) };
       }
 
+      data.householdId = data.householdId || householdId;
       const updated = await saveItem<CalendarEvent>(CONTAINER, data);
       return { status: 200, headers, body: JSON.stringify(updated) };
     }

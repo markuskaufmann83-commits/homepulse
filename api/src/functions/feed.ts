@@ -1,17 +1,26 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
 import { queryItems, saveItem, deleteItemById, getItemById } from '../shared/db';
 import { FeedPost, FeedComment } from '../shared/types';
-import { SEED_FEED_POSTS } from './seed';
 
 const CONTAINER = 'feed';
 
+function getHouseholdId(req: HttpRequest): string {
+  return (
+    req.headers.get('x-household-id') ||
+    req.query.get('householdId') ||
+    'default_household'
+  );
+}
+
 export async function feedHandler(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   const method = req.method;
+  const householdId = getHouseholdId(req);
+
   const headers = {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-household-id'
   };
 
   if (method === 'OPTIONS') {
@@ -20,22 +29,18 @@ export async function feedHandler(req: HttpRequest, context: InvocationContext):
 
   try {
     if (method === 'GET') {
-      let items = await queryItems<FeedPost>(CONTAINER);
-      if (items.length === 0) {
-        // Auto-seed initial posts
-        for (const post of SEED_FEED_POSTS) {
-          await saveItem<FeedPost>(CONTAINER, post);
-        }
-        items = SEED_FEED_POSTS;
-      }
+      const allItems = await queryItems<FeedPost>(CONTAINER);
+      const filtered = allItems.filter(
+        p => !p.householdId || p.householdId === householdId
+      );
 
       // Sort pinned first, then by timestamp desc
-      items.sort((a, b) => {
+      filtered.sort((a, b) => {
         if (a.pinned && !b.pinned) return -1;
         if (!a.pinned && b.pinned) return 1;
         return b.timestamp.localeCompare(a.timestamp);
       });
-      return { status: 200, headers, body: JSON.stringify(items) };
+      return { status: 200, headers, body: JSON.stringify(filtered) };
     }
 
     if (method === 'POST') {
@@ -70,6 +75,7 @@ export async function feedHandler(req: HttpRequest, context: InvocationContext):
 
       const newPost: FeedPost = {
         id: data.id || `post_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        householdId: data.householdId || householdId,
         authorId: data.authorId,
         content: data.content,
         type: data.type || 'note',
@@ -89,6 +95,7 @@ export async function feedHandler(req: HttpRequest, context: InvocationContext):
         return { status: 400, headers, body: JSON.stringify({ error: 'Post id is required for update' }) };
       }
 
+      data.householdId = data.householdId || householdId;
       const updated = await saveItem<FeedPost>(CONTAINER, data);
       return { status: 200, headers, body: JSON.stringify(updated) };
     }

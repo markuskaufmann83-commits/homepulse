@@ -4,61 +4,23 @@ import { FamilyMember } from '../shared/types';
 
 const CONTAINER = 'members';
 
-// Default initial members if empty
-const DEFAULT_MEMBERS: FamilyMember[] = [
-  {
-    id: 'mem_1',
-    name: 'Mama Lisa',
-    role: 'admin',
-    avatar: '👩‍💼',
-    color: '#EC4899', // Pink
-    status: 'home',
-    statusMessage: 'Zuhause im Homeoffice',
-    locationShared: true,
-    updatedAt: new Date().toISOString()
-  },
-  {
-    id: 'mem_2',
-    name: 'Papa Thomas',
-    role: 'admin',
-    avatar: '👨‍💻',
-    color: '#3B82F6', // Blue
-    status: 'work',
-    statusMessage: 'Im Büro bis 17:00',
-    locationShared: true,
-    updatedAt: new Date().toISOString()
-  },
-  {
-    id: 'mem_3',
-    name: 'Mia',
-    role: 'child',
-    avatar: '👧',
-    color: '#8B5CF6', // Purple
-    status: 'school',
-    statusMessage: 'In der Schule',
-    locationShared: true,
-    updatedAt: new Date().toISOString()
-  },
-  {
-    id: 'mem_4',
-    name: 'Jonas',
-    role: 'child',
-    avatar: '👦',
-    color: '#10B981', // Emerald Green
-    status: 'home',
-    statusMessage: 'Zuhause & Hausaufgaben',
-    locationShared: true,
-    updatedAt: new Date().toISOString()
-  }
-];
+function getHouseholdId(req: HttpRequest): string {
+  return (
+    req.headers.get('x-household-id') ||
+    req.query.get('householdId') ||
+    'default_household'
+  );
+}
 
 export async function membersHandler(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   const method = req.method;
+  const householdId = getHouseholdId(req);
+
   const headers = {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-household-id'
   };
 
   if (method === 'OPTIONS') {
@@ -67,15 +29,12 @@ export async function membersHandler(req: HttpRequest, context: InvocationContex
 
   try {
     if (method === 'GET') {
-      let items = await queryItems<FamilyMember>(CONTAINER);
-      if (items.length === 0) {
-        // Seed default members if empty
-        for (const m of DEFAULT_MEMBERS) {
-          await saveItem<FamilyMember>(CONTAINER, m);
-        }
-        items = DEFAULT_MEMBERS;
-      }
-      return { status: 200, headers, body: JSON.stringify(items) };
+      const allMembers = await queryItems<FamilyMember>(CONTAINER);
+      // Filter by household
+      const filtered = allMembers.filter(
+        m => !m.householdId || m.householdId === householdId
+      );
+      return { status: 200, headers, body: JSON.stringify(filtered) };
     }
 
     if (method === 'POST') {
@@ -86,6 +45,8 @@ export async function membersHandler(req: HttpRequest, context: InvocationContex
 
       const newMember: FamilyMember = {
         id: data.id || `mem_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        householdId: data.householdId || householdId,
+        userId: data.userId,
         name: data.name,
         role: data.role || 'member',
         avatar: data.avatar || '👤',
@@ -106,6 +67,7 @@ export async function membersHandler(req: HttpRequest, context: InvocationContex
         return { status: 400, headers, body: JSON.stringify({ error: 'Member id is required for update' }) };
       }
 
+      data.householdId = data.householdId || householdId;
       data.updatedAt = new Date().toISOString();
       const updated = await saveItem<FamilyMember>(CONTAINER, data);
       return { status: 200, headers, body: JSON.stringify(updated) };
@@ -114,7 +76,7 @@ export async function membersHandler(req: HttpRequest, context: InvocationContex
     if (method === 'DELETE') {
       const id = req.query.get('id');
       if (!id) {
-        return { status: 400, headers, body: JSON.stringify({ error: 'Member id is required' }) };
+        return { status: 400, headers, body: JSON.stringify({ error: 'Member id query parameter is required' }) };
       }
 
       const deleted = await deleteItemById(CONTAINER, id);

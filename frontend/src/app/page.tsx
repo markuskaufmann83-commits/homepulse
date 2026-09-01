@@ -9,6 +9,9 @@ import { FamilyFeed } from '../components/FamilyFeed';
 import { MemberManager } from '../components/MemberManager';
 import { VoiceAssistant } from '../components/VoiceAssistant';
 import { PremiumModal } from '../components/PremiumModal';
+import { AuthView } from '../components/AuthView';
+import { getAuthSession } from '../lib/storage';
+import { AuthSession } from '../lib/types';
 import {
   LayoutDashboard,
   ShoppingCart,
@@ -18,9 +21,28 @@ import {
 } from 'lucide-react';
 
 export default function Home() {
+  const [session, setSession] = useState<AuthSession | null>(null);
+  const [isAuthChecked, setIsAuthChecked] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [isPremiumOpen, setIsPremiumOpen] = useState<boolean>(false);
   const [isVoiceOpen, setIsVoiceOpen] = useState<boolean>(false);
+
+  // Check authentication session on mount
+  useEffect(() => {
+    const currentSession = getAuthSession();
+    setSession(currentSession);
+    setIsAuthChecked(true);
+
+    const handleDataChange = (e: any) => {
+      if (e?.detail?.resource === 'auth') {
+        const s = getAuthSession();
+        setSession(s);
+      }
+    };
+
+    window.addEventListener('homepulse-data-change', handleDataChange);
+    return () => window.removeEventListener('homepulse-data-change', handleDataChange);
+  }, []);
 
   // Sync tab with URL query parameter & browser history
   useEffect(() => {
@@ -56,6 +78,15 @@ export default function Home() {
     }
   };
 
+  const handleAuthSuccess = (newSession: AuthSession) => {
+    setSession(newSession);
+    setActiveTab('dashboard');
+  };
+
+  const handleLogout = () => {
+    setSession(null);
+  };
+
   const tabs = [
     { id: 'dashboard', label: 'Übersicht', icon: LayoutDashboard },
     { id: 'shopping', label: 'Einkauf', icon: ShoppingCart },
@@ -64,12 +95,26 @@ export default function Home() {
     { id: 'members', label: 'Familie', icon: Users }
   ];
 
+  if (!isAuthChecked) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-950">
+        <div className="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  // If not logged in, render Authentication Screen
+  if (!session) {
+    return <AuthView onAuthSuccess={handleAuthSuccess} />;
+  }
+
   return (
     <div className="flex flex-col min-h-screen">
       {/* Top Header */}
       <Header
         onOpenPremium={() => setIsPremiumOpen(true)}
         onNavigateTab={tab => handleTabChange(tab)}
+        onLogout={handleLogout}
       />
 
       {/* Desktop & Tablet Navigation Bar */}
@@ -117,7 +162,6 @@ export default function Home() {
         isOpen={isVoiceOpen}
         onOpenChange={open => setIsVoiceOpen(open)}
         onActionCompleted={() => {
-          // Trigger refresh event
           if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('homepulse-data-change', { detail: { resource: 'all' } }));
           }

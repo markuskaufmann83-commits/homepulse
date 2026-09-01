@@ -12,6 +12,20 @@ import { parseGermanTextLocally } from './nlpParser';
 
 const FORCE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK_DATA === 'true';
 
+function getAuthHeaders(): Record<string, string> {
+  const session = storage.getAuthSession();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json'
+  };
+  if (session?.household?.id) {
+    headers['x-household-id'] = session.household.id;
+  }
+  if (session?.token) {
+    headers['Authorization'] = `Bearer ${session.token}`;
+  }
+  return headers;
+}
+
 async function fetchWithFallback<T>(
   url: string,
   options?: RequestInit,
@@ -22,20 +36,23 @@ async function fetchWithFallback<T>(
   }
 
   try {
-    const res = await fetch(url, options);
+    const authHeaders = getAuthHeaders();
+    const mergedHeaders = {
+      ...authHeaders,
+      ...(options?.headers as Record<string, string> || {})
+    };
+
+    const res = await fetch(url, {
+      ...options,
+      headers: mergedHeaders
+    });
+
     if (res.ok) {
       const data = (await res.json()) as T;
-      if (Array.isArray(data)) {
-        if (data.length > 0) {
-          return data;
-        } else if (fallbackFn) {
-          return fallbackFn();
-        }
-      }
       return data;
     }
   } catch (error) {
-    console.info(`API call to ${url} failed or offline, using fallback storage:`, error);
+    console.info(`API call to ${url} offline or fallback:`, error);
   }
 
   if (fallbackFn) {
@@ -45,47 +62,42 @@ async function fetchWithFallback<T>(
 }
 
 export const Api = {
-  // Seed / Reset all data on Azure Cosmos DB & LocalStorage
-  async seedData(): Promise<{ success: boolean; message: string }> {
-    try {
-      await fetch('/api/seed', { method: 'POST' });
-    } catch {}
-    storage.resetAllToMockData();
-    return { success: true, message: 'Daten erfolgreich auf Standard-Beispieldaten zurückgesetzt!' };
-  },
-
   // Members
   async getMembers(): Promise<FamilyMember[]> {
     const mems = await fetchWithFallback('/api/members', { method: 'GET' }, () => storage.loadMembers());
-    if (mems && mems.length > 0) {
+    if (mems) {
       storage.saveMembers(mems);
     }
-    return mems;
+    return mems || [];
   },
 
   async updateMember(member: FamilyMember): Promise<FamilyMember> {
+    const householdId = storage.getActiveHouseholdId();
+    const normalized = { ...member, householdId: member.householdId || householdId };
+
     const members = storage.loadMembers();
-    const idx = members.findIndex(m => m.id === member.id);
-    if (idx >= 0) members[idx] = member;
-    else members.push(member);
+    const idx = members.findIndex(m => m.id === normalized.id);
+    if (idx >= 0) members[idx] = normalized;
+    else members.push(normalized);
     storage.saveMembers(members);
 
     fetchWithFallback(
       '/api/members',
       {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(member)
+        body: JSON.stringify(normalized)
       },
-      () => member
+      () => normalized
     ).catch(() => {});
 
-    return member;
+    return normalized;
   },
 
   async addMember(member: Partial<FamilyMember>): Promise<FamilyMember> {
+    const householdId = storage.getActiveHouseholdId();
     const newM: FamilyMember = {
       id: member.id || `mem_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      householdId: member.householdId || householdId,
       name: member.name || 'Neues Mitglied',
       role: member.role || 'member',
       avatar: member.avatar || '👤',
@@ -104,7 +116,6 @@ export const Api = {
       '/api/members',
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newM)
       },
       () => newM
@@ -124,15 +135,17 @@ export const Api = {
   // Shopping Items
   async getShoppingItems(): Promise<ShoppingItem[]> {
     const items = await fetchWithFallback('/api/shopping', { method: 'GET' }, () => storage.loadShoppingItems());
-    if (items && items.length > 0) {
+    if (items) {
       storage.saveShoppingItems(items);
     }
-    return items;
+    return items || [];
   },
 
   async addShoppingItem(item: Partial<ShoppingItem>): Promise<ShoppingItem> {
+    const householdId = storage.getActiveHouseholdId();
     const newItem: ShoppingItem = {
       id: item.id || `shop_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      householdId: item.householdId || householdId,
       title: item.title!,
       category: item.category || 'Sonstiges',
       quantity: item.quantity,
@@ -150,7 +163,6 @@ export const Api = {
       '/api/shopping',
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newItem)
       },
       () => newItem
@@ -169,7 +181,6 @@ export const Api = {
       '/api/shopping',
       {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(item)
       },
       () => item
@@ -198,7 +209,6 @@ export const Api = {
       '/api/shopping',
       {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(item)
       },
       () => item
@@ -226,7 +236,7 @@ export const Api = {
   // Calendar Events
   async getCalendarEvents(): Promise<CalendarEvent[]> {
     const events = await fetchWithFallback('/api/calendar', { method: 'GET' }, () => storage.loadCalendarEvents());
-    if (events && events.length > 0) {
+    if (events) {
       const normalized = events.map(e => ({
         ...e,
         date: (e.date || '').split('T')[0]
@@ -234,13 +244,15 @@ export const Api = {
       storage.saveCalendarEvents(normalized);
       return normalized;
     }
-    return storage.loadCalendarEvents();
+    return storage.loadCalendarEvents() || [];
   },
 
   async addCalendarEvent(event: Partial<CalendarEvent>): Promise<CalendarEvent> {
+    const householdId = storage.getActiveHouseholdId();
     const normalizedDate = (event.date || new Date().toISOString()).split('T')[0];
     const newEvent: CalendarEvent = {
       id: event.id || `cal_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      householdId: event.householdId || householdId,
       title: event.title || 'Termin',
       description: event.description,
       date: normalizedDate,
@@ -256,7 +268,6 @@ export const Api = {
       externalSource: event.externalSource || 'manual'
     };
 
-    // Save immediately to local storage and trigger instant UI update
     const events = storage.loadCalendarEvents();
     events.push(newEvent);
     events.sort((a, b) => {
@@ -266,12 +277,10 @@ export const Api = {
     });
     storage.saveCalendarEvents(events);
 
-    // Also sync to Cosmos DB
     fetchWithFallback(
       '/api/calendar',
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newEvent)
       },
       () => newEvent
@@ -294,7 +303,6 @@ export const Api = {
       '/api/calendar',
       {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(normalized)
       },
       () => normalized
@@ -314,16 +322,20 @@ export const Api = {
   // Feed Posts
   async getFeedPosts(): Promise<FeedPost[]> {
     const posts = await fetchWithFallback('/api/feed', { method: 'GET' }, () => storage.loadFeedPosts());
-    if (posts && posts.length > 0) {
+    if (posts) {
       storage.saveFeedPosts(posts);
     }
-    return posts;
+    return posts || [];
   },
 
   async addFeedPost(post: Partial<FeedPost>): Promise<FeedPost> {
+    const householdId = storage.getActiveHouseholdId();
+    const session = storage.getAuthSession();
+
     const newPost: FeedPost = {
       id: post.id || `post_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      authorId: post.authorId || 'mem_1',
+      householdId: post.householdId || householdId,
+      authorId: post.authorId || session?.member?.id || 'mem_1',
       content: post.content!,
       type: post.type || 'note',
       timestamp: new Date().toISOString(),
@@ -340,7 +352,6 @@ export const Api = {
       '/api/feed',
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newPost)
       },
       () => newPost
@@ -369,7 +380,6 @@ export const Api = {
       '/api/feed?action=comment',
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ postId, content, authorId })
       },
       () => post || null
@@ -402,7 +412,6 @@ export const Api = {
       '/api/feed',
       {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(post)
       },
       () => post
@@ -411,23 +420,23 @@ export const Api = {
     return post;
   },
 
-  // AI Parser with instant client parser & 1.5s timeout for zero-hang guarantee
+  // AI Parser with instant client parser & 1.8s timeout
   async parseAiPrompt(
     prompt: string,
-    memberNames: string[] = ['Papa', 'Mama', 'Mia', 'Jonas', 'Papa Thomas', 'Mama Lisa']
+    memberNames: string[] = []
   ): Promise<AiParseResponse> {
-    // 1. Run ultra-fast deterministic parser first
-    const localActions = parseGermanTextLocally(prompt, memberNames);
+    const members = storage.loadMembers();
+    const namesToUse = memberNames.length > 0 ? memberNames : members.map(m => m.name);
+    const localActions = parseGermanTextLocally(prompt, namesToUse);
 
-    // If local actions are found with high confidence, return immediately or race with API
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 1800); // 1.8 second strict timeout
+      const timeoutId = setTimeout(() => controller.abort(), 1800);
 
       const res = await fetch('/api/ai-parse', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, memberNames }),
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ prompt, memberNames: namesToUse }),
         signal: controller.signal
       });
 
@@ -439,9 +448,7 @@ export const Api = {
           return data;
         }
       }
-    } catch (err) {
-      // Aborted or network error -> use local parser immediately
-    }
+    } catch {}
 
     return {
       rawText: prompt,
