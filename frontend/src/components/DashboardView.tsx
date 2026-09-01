@@ -162,14 +162,32 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-bold text-white truncate">{m.name}</p>
-                <div className="flex items-center gap-1 mt-0.5">
+                <div className="flex items-center gap-1.5 mt-0.5">
                   <span
                     className={`w-2 h-2 rounded-full ${
-                      m.status === 'home' ? 'bg-emerald-400' : 'bg-amber-400'
+                      m.status === 'home'
+                        ? 'bg-emerald-400'
+                        : m.status === 'work'
+                        ? 'bg-blue-400'
+                        : m.status === 'school'
+                        ? 'bg-purple-400'
+                        : m.status === 'vacation'
+                        ? 'bg-orange-400'
+                        : 'bg-amber-400'
                     }`}
                   ></span>
                   <span className="text-[10px] text-slate-300 truncate">
-                    {m.status === 'home' ? 'Zuhause' : (m.statusMessage || 'Unterwegs')}
+                    {m.statusMessage || (
+                      m.status === 'home'
+                        ? 'Zuhause'
+                        : m.status === 'work'
+                        ? 'Im Büro'
+                        : m.status === 'school'
+                        ? 'In der Schule'
+                        : m.status === 'vacation'
+                        ? 'Im Urlaub'
+                        : 'Unterwegs'
+                    )}
                   </span>
                 </div>
               </div>

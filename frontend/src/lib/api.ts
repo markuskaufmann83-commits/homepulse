@@ -42,7 +42,18 @@ export const Api = {
         if (Array.isArray(serverItems) && serverItems.length > 0) {
           const map = new Map<string, FamilyMember>();
           local.forEach(m => map.set(m.id, m));
-          serverItems.forEach(m => map.set(m.id, m));
+          serverItems.forEach(serverMember => {
+            const localMember = map.get(serverMember.id);
+            if (!localMember) {
+              map.set(serverMember.id, serverMember);
+            } else {
+              const localTime = new Date(localMember.updatedAt || 0).getTime();
+              const serverTime = new Date(serverMember.updatedAt || 0).getTime();
+              if (serverTime > localTime) {
+                map.set(serverMember.id, serverMember);
+              }
+            }
+          });
           const merged = Array.from(map.values());
           storage.saveMembers(merged, false); // Don't trigger event loop
           return merged;

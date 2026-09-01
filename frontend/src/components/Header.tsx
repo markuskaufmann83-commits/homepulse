@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { FamilyMember, SubscriptionStatus, MemberStatus, Household, User, AuthSession } from '../lib/types';
 import { getCurrentUser, setCurrentUser, loadMembers, loadSubscription, getAuthSession } from '../lib/storage';
 import { AuthService } from '../lib/auth';
@@ -11,11 +11,6 @@ import {
   Crown,
   Activity,
   LogOut,
-  Copy,
-  Home,
-  Navigation,
-  Briefcase,
-  GraduationCap,
   ChevronDown,
   KeyRound
 } from 'lucide-react';
@@ -35,6 +30,8 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPremium, onNavigateTab, on
   const [user, setUser] = useState<AuthSession['user'] | null>(null);
   const [memberMenuOpen, setMemberMenuOpen] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
+
+  const menuRef = useRef<HTMLDivElement>(null);
 
   const refreshData = () => {
     const session = getAuthSession();
@@ -56,6 +53,23 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPremium, onNavigateTab, on
     return () => window.removeEventListener('homepulse-data-change', handleDataChange);
   }, []);
 
+  // Close dropdown menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent | TouchEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setMemberMenuOpen(false);
+      }
+    };
+    if (memberMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('touchstart', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
+    };
+  }, [memberMenuOpen]);
+
   const handleSelectMember = (id: string) => {
     setCurrentUser(id);
     setCurrentUserState(members.find(m => m.id === id) || null);
@@ -70,8 +84,9 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPremium, onNavigateTab, on
       statusMessage,
       updatedAt: new Date().toISOString()
     };
-    await Api.updateMember(updated);
     setCurrentUserState(updated);
+    setMembers(prev => prev.map(m => m.id === updated.id ? updated : m));
+    await Api.updateMember(updated);
   };
 
   const handleCopyInviteCode = () => {
@@ -101,6 +116,8 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPremium, onNavigateTab, on
         return <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30">💼 Büro</span>;
       case 'school':
         return <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">📚 Schule</span>;
+      case 'vacation':
+        return <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-orange-500/20 text-orange-300 border border-orange-500/30">🌴 Urlaub</span>;
       default:
         return <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-slate-500/20 text-slate-300 border border-slate-500/30">📍 Aktiv</span>;
     }
@@ -143,7 +160,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPremium, onNavigateTab, on
           {household?.inviteCode && (
             <button
               onClick={handleCopyInviteCode}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-slate-300 text-xs font-medium border border-white/10 transition-colors group"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 text-xs font-semibold border border-slate-700 transition-colors group shadow-md"
               title="Einladungscode für Familienmitglieder kopieren"
             >
               <KeyRound className="w-3.5 h-3.5 text-emerald-400" />
@@ -166,10 +183,10 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPremium, onNavigateTab, on
           )}
 
           {/* Member Switcher Dropdown */}
-          <div className="relative">
+          <div className="relative" ref={menuRef}>
             <button
               onClick={() => setMemberMenuOpen(!memberMenuOpen)}
-              className="flex items-center gap-2 px-2.5 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 border border-white/10 transition-colors"
+              className="flex items-center gap-2 px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 transition-colors shadow-md"
             >
               <div
                 className="w-7 h-7 rounded-lg flex items-center justify-center text-sm shadow"
@@ -185,49 +202,49 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPremium, onNavigateTab, on
             </button>
 
             {memberMenuOpen && (
-              <div className="absolute right-0 mt-2 w-64 rounded-2xl glass-panel bg-slate-900/95 border border-white/15 shadow-2xl py-2 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
+              <div className="absolute right-0 mt-2 w-72 rounded-2xl bg-slate-900 border border-slate-700 shadow-2xl shadow-black/95 py-2.5 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
                 {/* Active Member Status Switcher */}
-                <div className="px-3 py-2 border-b border-white/10">
-                  <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
+                <div className="px-3.5 py-2 border-b border-slate-800">
+                  <p className="text-[11px] font-bold text-slate-300 uppercase tracking-wider mb-2">
                     Dein Status ({currentUser?.name || user?.name}):
                   </p>
-                  <div className="grid grid-cols-2 gap-1">
+                  <div className="grid grid-cols-2 gap-1.5">
                     <button
                       onClick={() => handleQuickStatusChange('home', 'Zuhause')}
-                      className={`px-2 py-1 rounded-lg text-[11px] font-medium border flex items-center gap-1 ${
+                      className={`px-2.5 py-1.5 rounded-xl text-xs font-medium border flex items-center gap-1.5 transition-colors ${
                         currentUser?.status === 'home'
-                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 font-bold'
-                          : 'text-slate-400 border-white/5 hover:bg-white/5'
+                          ? 'bg-emerald-500/25 text-emerald-200 border-emerald-500/60 font-bold shadow-sm'
+                          : 'text-slate-300 bg-slate-800/80 border-slate-700 hover:bg-slate-700 hover:text-white'
                       }`}
                     >
                       <span>🏠</span> Zuhause
                     </button>
                     <button
                       onClick={() => handleQuickStatusChange('away', 'Unterwegs')}
-                      className={`px-2 py-1 rounded-lg text-[11px] font-medium border flex items-center gap-1 ${
+                      className={`px-2.5 py-1.5 rounded-xl text-xs font-medium border flex items-center gap-1.5 transition-colors ${
                         currentUser?.status === 'away'
-                          ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 font-bold'
-                          : 'text-slate-400 border-white/5 hover:bg-white/5'
+                          ? 'bg-amber-500/25 text-amber-200 border-amber-500/60 font-bold shadow-sm'
+                          : 'text-slate-300 bg-slate-800/80 border-slate-700 hover:bg-slate-700 hover:text-white'
                       }`}
                     >
                       <span>🚗</span> Unterwegs
                     </button>
                     <button
                       onClick={() => handleQuickStatusChange('work', 'Im Büro')}
-                      className={`px-2 py-1 rounded-lg text-[11px] font-medium border flex items-center gap-1 ${
+                      className={`px-2.5 py-1.5 rounded-xl text-xs font-medium border flex items-center gap-1.5 transition-colors ${
                         currentUser?.status === 'work'
-                          ? 'bg-blue-500/20 text-blue-300 border-blue-500/40 font-bold'
-                          : 'text-slate-400 border-white/5 hover:bg-white/5'
+                          ? 'bg-blue-500/25 text-blue-200 border-blue-500/60 font-bold shadow-sm'
+                          : 'text-slate-300 bg-slate-800/80 border-slate-700 hover:bg-slate-700 hover:text-white'
                       }`}
                     >
-                      <span>💼</span> Büro
+                      <span>💼</span> Im Büro
                     </button>
                     <button
                       onClick={() => handleQuickStatusChange('school', 'In der Schule')}
-                      className={`px-2 py-1 rounded-lg text-[11px] font-medium border flex items-center gap-1 ${
+                      className={`px-2.5 py-1.5 rounded-xl text-xs font-medium border flex items-center gap-1.5 transition-colors ${
                         currentUser?.status === 'school'
-                          ? 'bg-purple-500/20 text-purple-300 border-purple-500/40 font-bold'
-                          : 'text-slate-400 border-white/5 hover:bg-white/5'
+                          ? 'bg-purple-500/25 text-purple-200 border-purple-500/60 font-bold shadow-sm'
+                          : 'text-slate-300 bg-slate-800/80 border-slate-700 hover:bg-slate-700 hover:text-white'
                       }`}
                     >
                       <span>📚</span> Schule
@@ -238,25 +255,25 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPremium, onNavigateTab, on
                 {/* Profile Switcher */}
                 {members.length > 1 && (
                   <>
-                    <div className="px-3 py-1.5 border-b border-white/10">
-                      <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Profil wechseln</p>
+                    <div className="px-3.5 py-2 border-b border-slate-800">
+                      <p className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">Profil wechseln</p>
                     </div>
-                    <div className="p-1 space-y-1">
+                    <div className="p-1.5 space-y-1">
                       {members.map(m => (
                         <button
                           key={m.id}
                           onClick={() => handleSelectMember(m.id)}
                           className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-left text-xs transition-colors ${
                             currentUser?.id === m.id
-                              ? 'bg-emerald-500/20 text-white font-medium border border-emerald-500/30'
-                              : 'text-slate-300 hover:bg-white/5'
+                              ? 'bg-emerald-500/20 text-white font-bold border border-emerald-500/40'
+                              : 'text-slate-200 hover:bg-slate-800'
                           }`}
                         >
                           <div className="flex items-center gap-2.5">
                             <span className="text-base">{m.avatar}</span>
                             <div>
-                              <p className="font-medium text-slate-100">{m.name}</p>
-                              <p className="text-[10px] text-slate-400">{m.statusMessage || m.status}</p>
+                              <p className="font-semibold text-slate-100">{m.name}</p>
+                              <p className="text-[10px] text-slate-400">{m.statusMessage || (m.status === 'home' ? 'Zuhause' : m.status === 'work' ? 'Im Büro' : m.status === 'school' ? 'In der Schule' : 'Unterwegs')}</p>
                             </div>
                           </div>
                           {currentUser?.id === m.id && <Check className="w-4 h-4 text-emerald-400" />}
@@ -267,16 +284,16 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPremium, onNavigateTab, on
                 )}
 
                 {/* Household Info */}
-                <div className="px-3 py-2 border-t border-white/10 text-xs text-slate-400">
-                  <p className="text-[10px] uppercase font-bold text-slate-500">Angemeldet als:</p>
-                  <p className="text-slate-200 font-medium truncate">{user?.email}</p>
+                <div className="px-3.5 py-2 border-t border-slate-800 text-xs text-slate-300">
+                  <p className="text-[10px] uppercase font-bold text-slate-400">Angemeldet als:</p>
+                  <p className="text-slate-100 font-semibold truncate">{user?.email}</p>
                 </div>
 
                 {/* Logout Action */}
-                <div className="p-1.5 border-t border-white/10">
+                <div className="p-1.5 border-t border-slate-800">
                   <button
                     onClick={handleLogoutClick}
-                    className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 transition-colors font-medium"
+                    className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs text-rose-400 hover:text-rose-200 hover:bg-rose-500/20 transition-colors font-bold"
                   >
                     <LogOut className="w-3.5 h-3.5" />
                     <span>Abmelden</span>
