@@ -42,6 +42,16 @@ function verifyToken(token: string): { userId: string; householdId: string } | n
   }
 }
 
+function normalizeInviteCode(code: string): string {
+  let clean = code.trim().toUpperCase().replace(/[\s_]+/g, '-');
+  if (/^\d{4}$/.test(clean)) {
+    clean = `HP-${clean}`;
+  } else if (/^HP\d{4}$/.test(clean)) {
+    clean = `HP-${clean.substring(2)}`;
+  }
+  return clean;
+}
+
 function generateInviteCode(): string {
   const num = Math.floor(1000 + Math.random() * 9000);
   return `HP-${num}`;
@@ -112,15 +122,15 @@ export async function authHandler(req: HttpRequest, context: InvocationContext):
 
       // Join existing household via invite code
       if (body.inviteCode && body.inviteCode.trim()) {
-        const inviteClean = body.inviteCode.trim().toUpperCase();
+        const inviteClean = normalizeInviteCode(body.inviteCode);
         const households = await queryItems<Household>('households');
-        household = households.find(h => h.inviteCode.toUpperCase() === inviteClean) || null;
+        household = households.find(h => normalizeInviteCode(h.inviteCode) === inviteClean) || null;
 
         if (!household) {
           return {
             status: 404,
             headers,
-            body: JSON.stringify({ error: `Der Einladungscode '${inviteClean}' wurde nicht gefunden.` })
+            body: JSON.stringify({ error: `Der Einladungscode '${inviteClean}' wurde nicht gefunden. Bitte prüfe die 4 Ziffern.` })
           };
         }
         userRole = 'member';
