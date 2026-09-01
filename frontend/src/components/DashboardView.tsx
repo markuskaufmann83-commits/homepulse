@@ -269,13 +269,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
                       <button
+                        type="button"
                         onClick={() => handleToggleShopping(item)}
-                        className="w-5 h-5 rounded-md bg-slate-800 border border-white/20 hover:border-emerald-400 flex items-center justify-center text-transparent hover:text-emerald-400 transition-colors"
+                        className={`w-5 h-5 rounded-md flex items-center justify-center transition-all shrink-0 ${
+                          item.completed
+                            ? 'bg-emerald-500 text-white shadow-sm'
+                            : 'bg-slate-800 border border-white/20 hover:border-emerald-400 text-transparent hover:text-emerald-400'
+                        }`}
                       >
                         <Check className="w-3.5 h-3.5" />
                       </button>
                       <span className="text-xs font-medium text-slate-200 truncate">
-                        {item.quantity ? `${item.quantity} ` : ''}
+                        {item.quantity && item.quantity > 1 ? `${item.quantity} ` : ''}
                         {item.title}
                       </span>
                     </div>

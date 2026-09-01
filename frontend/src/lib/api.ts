@@ -10,8 +10,6 @@ import {
 import * as storage from './storage';
 import { parseGermanTextLocally } from './nlpParser';
 
-const FORCE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK_DATA === 'true';
-
 function getAuthHeaders(): Record<string, string> {
   const session = storage.getAuthSession();
   const headers: Record<string, string> = {
@@ -27,33 +25,45 @@ function getAuthHeaders(): Record<string, string> {
 }
 
 export const Api = {
-  // Members
+  // ==========================================
+  // MEMBERS
+  // ==========================================
   async getMembers(): Promise<FamilyMember[]> {
     const local = storage.loadMembers();
     const session = storage.getAuthSession();
-    if (!session) return [];
+    if (!session) return local;
 
     try {
       const res = await fetch(`/api/members?householdId=${session.household.id}`, {
         headers: getAuthHeaders()
       });
       if (res.ok) {
-        const mems = (await res.json()) as FamilyMember[];
-        if (Array.isArray(mems) && mems.length > 0) {
-          storage.saveMembers(mems);
-          return mems;
+        const serverItems = (await res.json()) as FamilyMember[];
+        if (Array.isArray(serverItems) && serverItems.length > 0) {
+          // Merge server members with local members
+          const map = new Map<string, FamilyMember>();
+          local.forEach(m => map.set(m.id, m));
+          serverItems.forEach(m => map.set(m.id, m));
+          const merged = Array.from(map.values());
+          storage.saveMembers(merged);
+          return merged;
         }
       }
     } catch {}
 
     if (local.length > 0) return local;
-    if (session?.member) return [session.member];
+    if (session?.member) {
+      const init = [session.member];
+      storage.saveMembers(init);
+      return init;
+    }
     return [];
   },
 
   async updateMember(member: FamilyMember): Promise<FamilyMember> {
     const householdId = storage.getActiveHouseholdId();
-    const normalized = { ...member, householdId: member.householdId || householdId };
+    const now = new Date().toISOString();
+    const normalized = { ...member, householdId: member.householdId || householdId, updatedAt: now };
 
     const members = storage.loadMembers();
     const idx = members.findIndex(m => m.id === normalized.id);
@@ -72,6 +82,7 @@ export const Api = {
 
   async addMember(member: Partial<FamilyMember>): Promise<FamilyMember> {
     const householdId = storage.getActiveHouseholdId();
+    const now = new Date().toISOString();
     const newM: FamilyMember = {
       id: member.id || `mem_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       householdId: member.householdId || householdId,
@@ -82,7 +93,7 @@ export const Api = {
       status: member.status || 'home',
       statusMessage: member.statusMessage,
       locationShared: member.locationShared !== false,
-      updatedAt: new Date().toISOString()
+      updatedAt: now
     };
 
     const members = storage.loadMembers();
@@ -110,11 +121,13 @@ export const Api = {
     return true;
   },
 
-  // Shopping Items
+  // ==========================================
+  // SHOPPING ITEMS
+  // ==========================================
   async getShoppingItems(): Promise<ShoppingItem[]> {
     const local = storage.loadShoppingItems();
     const session = storage.getAuthSession();
-    if (!session) return [];
+    if (!session) return local;
 
     try {
       const res = await fetch(`/api/shopping?householdId=${session.household.id}`, {
@@ -123,27 +136,33 @@ export const Api = {
       if (res.ok) {
         const serverItems = (await res.json()) as ShoppingItem[];
         if (Array.isArray(serverItems)) {
-          const localMap = new Map(local.map(i => [i.id, i]));
-          const merged: ShoppingItem[] = serverItems.map(serverItem => {
-            const localItem = localMap.get(serverItem.id);
-            // If local item was created or toggled/modified in the last 20 seconds, preserve local completed state
-            if (localItem) {
+          // Robust Union-Merge: Never delete locally existing items!
+          const itemMap = new Map<string, ShoppingItem>();
+
+          // 1. Put all local items in the map
+          local.forEach(item => itemMap.set(item.id, item));
+
+          // 2. Merge server items: update if server item is newer or local has no recent toggle
+          serverItems.forEach(serverItem => {
+            const localItem = itemMap.get(serverItem.id);
+            if (!localItem) {
+              itemMap.set(serverItem.id, serverItem);
+            } else {
               const localTime = new Date(localItem.updatedAt || localItem.createdAt).getTime();
               const serverTime = new Date(serverItem.updatedAt || serverItem.createdAt).getTime();
-              if (localTime > serverTime || Date.now() - localTime < 20000) {
-                return localItem;
+              // Only overwrite local if server is explicitly newer and local was not changed in the last 15s
+              if (serverTime > localTime && Date.now() - localTime > 15000) {
+                itemMap.set(serverItem.id, serverItem);
               }
             }
-            return serverItem;
           });
 
-          // Also include any new local items not yet in serverItems
-          const serverIds = new Set(serverItems.map(i => i.id));
-          for (const loc of local) {
-            if (!serverIds.has(loc.id)) {
-              merged.unshift(loc);
-            }
-          }
+          const merged = Array.from(itemMap.values());
+          // Sort uncompleted first, then by createdAt desc
+          merged.sort((a, b) => {
+            if (a.completed !== b.completed) return a.completed ? 1 : -1;
+            return b.createdAt.localeCompare(a.createdAt);
+          });
 
           storage.saveShoppingItems(merged);
           return merged;
@@ -170,12 +189,12 @@ export const Api = {
       updatedAt: now
     };
 
-    // Save immediately locally so UI reflects change instantly
+    // Save immediately locally
     const items = storage.loadShoppingItems();
     items.unshift(newItem);
     storage.saveShoppingItems(items);
 
-    // Sync to backend
+    // Sync in background to Cosmos DB
     fetch('/api/shopping', {
       method: 'POST',
       headers: getAuthHeaders(),
@@ -255,11 +274,13 @@ export const Api = {
     return true;
   },
 
-  // Calendar Events
+  // ==========================================
+  // CALENDAR EVENTS
+  // ==========================================
   async getCalendarEvents(): Promise<CalendarEvent[]> {
     const local = storage.loadCalendarEvents();
     const session = storage.getAuthSession();
-    if (!session) return [];
+    if (!session) return local;
 
     try {
       const res = await fetch(`/api/calendar?householdId=${session.household.id}`, {
@@ -268,15 +289,28 @@ export const Api = {
       if (res.ok) {
         const events = (await res.json()) as CalendarEvent[];
         if (Array.isArray(events)) {
-          const normalized = events.map(e => ({
-            ...e,
-            date: (e.date || '').split('T')[0]
-          }));
-          const serverIds = new Set(normalized.map(e => e.id));
-          const unsynced = local.filter(
-            e => !serverIds.has(e.id) && Date.now() - new Date(e.createdAt).getTime() < 15000
-          );
-          const merged = [...unsynced, ...normalized];
+          const map = new Map<string, CalendarEvent>();
+
+          // Put all local events in map
+          local.forEach(e => {
+            const cleanDate = (e.date || '').split('T')[0];
+            map.set(e.id, { ...e, date: cleanDate });
+          });
+
+          // Merge server events without deleting local events
+          events.forEach(serverEv => {
+            const cleanDate = (serverEv.date || '').split('T')[0];
+            const normalized = { ...serverEv, date: cleanDate };
+            map.set(serverEv.id, normalized);
+          });
+
+          const merged = Array.from(map.values());
+          merged.sort((a, b) => {
+            const dComp = a.date.localeCompare(b.date);
+            if (dComp !== 0) return dComp;
+            return (a.time || '').localeCompare(b.time || '');
+          });
+
           storage.saveCalendarEvents(merged);
           return merged;
         }
@@ -356,11 +390,13 @@ export const Api = {
     return true;
   },
 
-  // Feed Posts
+  // ==========================================
+  // FEED POSTS
+  // ==========================================
   async getFeedPosts(): Promise<FeedPost[]> {
     const local = storage.loadFeedPosts();
     const session = storage.getAuthSession();
-    if (!session) return [];
+    if (!session) return local;
 
     try {
       const res = await fetch(`/api/feed?householdId=${session.household.id}`, {
@@ -369,11 +405,14 @@ export const Api = {
       if (res.ok) {
         const posts = (await res.json()) as FeedPost[];
         if (Array.isArray(posts)) {
-          const serverIds = new Set(posts.map(p => p.id));
-          const unsynced = local.filter(
-            p => !serverIds.has(p.id) && Date.now() - new Date(p.timestamp).getTime() < 15000
-          );
-          const merged = [...unsynced, ...posts];
+          const map = new Map<string, FeedPost>();
+          local.forEach(p => map.set(p.id, p));
+          posts.forEach(p => map.set(p.id, p));
+          const merged = Array.from(map.values());
+          merged.sort((a, b) => {
+            if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+            return b.timestamp.localeCompare(a.timestamp);
+          });
           storage.saveFeedPosts(merged);
           return merged;
         }
@@ -466,7 +505,9 @@ export const Api = {
     return post;
   },
 
-  // AI Parser with instant client parser & 1.8s timeout
+  // ==========================================
+  // AI PARSER
+  // ==========================================
   async parseAiPrompt(
     prompt: string,
     memberNames: string[] = []
@@ -504,7 +545,9 @@ export const Api = {
     };
   },
 
-  // Subscription Status
+  // ==========================================
+  // BILLING
+  // ==========================================
   async getSubscription(): Promise<SubscriptionStatus> {
     try {
       const res = await fetch('/api/billing', { headers: getAuthHeaders() });
