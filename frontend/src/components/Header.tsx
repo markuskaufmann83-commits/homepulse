@@ -2,19 +2,19 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { FamilyMember, SubscriptionStatus, MemberStatus, Household, User, AuthSession } from '../lib/types';
-import { getCurrentUser, setCurrentUser, loadMembers, loadSubscription, getAuthSession } from '../lib/storage';
+import { getCurrentUser, loadMembers, loadSubscription, getAuthSession } from '../lib/storage';
 import { AuthService } from '../lib/auth';
 import { Api } from '../lib/api';
 import {
   Sparkles,
-  Check,
   Crown,
   Activity,
   LogOut,
   ChevronDown,
-  KeyRound
+  KeyRound,
+  Shield,
+  User as UserIcon
 } from 'lucide-react';
-import confetti from 'canvas-confetti';
 
 interface HeaderProps {
   onOpenPremium: () => void;
@@ -69,12 +69,6 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPremium, onNavigateTab, on
       document.removeEventListener('touchstart', handleClickOutside);
     };
   }, [memberMenuOpen]);
-
-  const handleSelectMember = (id: string) => {
-    setCurrentUser(id);
-    setCurrentUserState(members.find(m => m.id === id) || null);
-    setMemberMenuOpen(false);
-  };
 
   const handleQuickStatusChange = async (status: MemberStatus, statusMessage: string) => {
     if (!currentUser) return;
@@ -154,7 +148,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPremium, onNavigateTab, on
           </div>
         </div>
 
-        {/* Right Section: Invite Code, Member Selector & Upgrade */}
+        {/* Right Section: Invite Code, Upgrade & Own Profile */}
         <div className="flex items-center gap-2 sm:gap-3">
           {/* Invite Code Badge with Copy */}
           {household?.inviteCode && (
@@ -182,7 +176,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPremium, onNavigateTab, on
             </button>
           )}
 
-          {/* Member Switcher Dropdown */}
+          {/* User Profile & Status Dropdown */}
           <div className="relative" ref={menuRef}>
             <button
               onClick={() => setMemberMenuOpen(!memberMenuOpen)}
@@ -203,10 +197,39 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPremium, onNavigateTab, on
 
             {memberMenuOpen && (
               <div className="absolute right-0 mt-2 w-72 rounded-2xl bg-slate-900 border border-slate-700 shadow-2xl shadow-black/95 py-2.5 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
-                {/* Active Member Status Switcher */}
-                <div className="px-3.5 py-2 border-b border-slate-800">
+                {/* Profile Header */}
+                <div className="px-3.5 py-2.5 border-b border-slate-800 flex items-center gap-3">
+                  <div
+                    className="w-10 h-10 rounded-xl flex items-center justify-center text-xl shadow border"
+                    style={{ backgroundColor: `${currentUser?.color || '#3B82F6'}33`, borderColor: currentUser?.color || '#3B82F6' }}
+                  >
+                    <span>{currentUser?.avatar || '👤'}</span>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-bold text-sm text-white truncate">{currentUser?.name || user?.name}</p>
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
+                        {user?.role === 'admin' ? (
+                          <>
+                            <Shield className="w-2.5 h-2.5 text-emerald-400" />
+                            <span>Admin</span>
+                          </>
+                        ) : (
+                          <>
+                            <UserIcon className="w-2.5 h-2.5 text-blue-400" />
+                            <span>Mitglied</span>
+                          </>
+                        )}
+                      </span>
+                      <span className="text-[10px] text-slate-400 truncate">{household?.name}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Personal Status Switcher */}
+                <div className="px-3.5 py-2.5 border-b border-slate-800">
                   <p className="text-[11px] font-bold text-slate-300 uppercase tracking-wider mb-2">
-                    Dein Status ({currentUser?.name || user?.name}):
+                    Dein aktueller Status:
                   </p>
                   <div className="grid grid-cols-2 gap-1.5">
                     <button
@@ -252,38 +275,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenPremium, onNavigateTab, on
                   </div>
                 </div>
 
-                {/* Profile Switcher */}
-                {members.length > 1 && (
-                  <>
-                    <div className="px-3.5 py-2 border-b border-slate-800">
-                      <p className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">Profil wechseln</p>
-                    </div>
-                    <div className="p-1.5 space-y-1">
-                      {members.map(m => (
-                        <button
-                          key={m.id}
-                          onClick={() => handleSelectMember(m.id)}
-                          className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-left text-xs transition-colors ${
-                            currentUser?.id === m.id
-                              ? 'bg-emerald-500/20 text-white font-bold border border-emerald-500/40'
-                              : 'text-slate-200 hover:bg-slate-800'
-                          }`}
-                        >
-                          <div className="flex items-center gap-2.5">
-                            <span className="text-base">{m.avatar}</span>
-                            <div>
-                              <p className="font-semibold text-slate-100">{m.name}</p>
-                              <p className="text-[10px] text-slate-400">{m.statusMessage || (m.status === 'home' ? 'Zuhause' : m.status === 'work' ? 'Im Büro' : m.status === 'school' ? 'In der Schule' : 'Unterwegs')}</p>
-                            </div>
-                          </div>
-                          {currentUser?.id === m.id && <Check className="w-4 h-4 text-emerald-400" />}
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                )}
-
-                {/* Household Info */}
+                {/* Account Details */}
                 <div className="px-3.5 py-2 border-t border-slate-800 text-xs text-slate-300">
                   <p className="text-[10px] uppercase font-bold text-slate-400">Angemeldet als:</p>
                   <p className="text-slate-100 font-semibold truncate">{user?.email}</p>

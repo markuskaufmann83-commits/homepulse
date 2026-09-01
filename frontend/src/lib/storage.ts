@@ -150,15 +150,13 @@ export function saveMembers(members: FamilyMember[], emitEvent = true) {
 }
 
 export function getCurrentUser(): FamilyMember | null {
-  const members = loadMembers();
-  if (typeof window === 'undefined') return members[0] || null;
-  const currentId = localStorage.getItem(KEYS.CURRENT_USER_ID);
-  if (currentId) {
-    const found = members.find(m => m.id === currentId);
-    if (found) return found;
-  }
   const session = getAuthSession();
-  if (session?.member) return session.member;
+  if (session?.member) {
+    const members = loadMembers();
+    const found = members.find(m => m.id === session.member.id);
+    return found || session.member;
+  }
+  const members = loadMembers();
   return members[0] || null;
 }
 
