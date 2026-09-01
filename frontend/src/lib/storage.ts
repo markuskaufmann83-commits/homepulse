@@ -4,9 +4,7 @@ import {
   CalendarEvent,
   FeedPost,
   SubscriptionStatus,
-  AuthSession,
-  User,
-  Household
+  AuthSession
 } from './types';
 import {
   INITIAL_MEMBERS,
@@ -16,15 +14,41 @@ import {
   INITIAL_SUBSCRIPTION
 } from './mockData';
 
+const CURRENT_STORAGE_VERSION = 'v3_clean_auth';
+
 const KEYS = {
-  AUTH_SESSION: 'homepulse_auth_session_v2',
-  MEMBERS: 'homepulse_members_v2',
-  SHOPPING: 'homepulse_shopping_v2',
-  CALENDAR: 'homepulse_calendar_v2',
-  FEED: 'homepulse_feed_v2',
-  SUBSCRIPTION: 'homepulse_subscription_v2',
-  CURRENT_USER_ID: 'homepulse_current_user_v2'
+  STORAGE_VERSION: 'homepulse_version',
+  AUTH_SESSION: 'homepulse_auth_session_v3',
+  MEMBERS: 'homepulse_members_v3',
+  SHOPPING: 'homepulse_shopping_v3',
+  CALENDAR: 'homepulse_calendar_v3',
+  FEED: 'homepulse_feed_v3',
+  SUBSCRIPTION: 'homepulse_subscription_v3',
+  CURRENT_USER_ID: 'homepulse_current_user_v3'
 };
+
+// Automatic one-time purge of legacy demo cache
+export function checkAndPurgeLegacyCache() {
+  if (typeof window === 'undefined') return;
+  try {
+    const version = localStorage.getItem(KEYS.STORAGE_VERSION);
+    if (version !== CURRENT_STORAGE_VERSION) {
+      // Clear all legacy keys from v1 and v2
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith('homepulse_') && k !== KEYS.STORAGE_VERSION) {
+          keysToRemove.push(k);
+        }
+      }
+      keysToRemove.forEach(k => localStorage.removeItem(k));
+      localStorage.setItem(KEYS.STORAGE_VERSION, CURRENT_STORAGE_VERSION);
+    }
+  } catch {}
+}
+
+// Run check immediately
+checkAndPurgeLegacyCache();
 
 export function dispatchDataChange(resource: string) {
   if (typeof window !== 'undefined') {
@@ -47,6 +71,7 @@ export function saveAuthSession(session: AuthSession) {
   if (typeof window === 'undefined') return;
   localStorage.setItem(KEYS.AUTH_SESSION, JSON.stringify(session));
   if (session.member) {
+    saveMembers([session.member]);
     setCurrentUser(session.member.id);
   }
   dispatchDataChange('auth');
@@ -99,7 +124,13 @@ export function getCurrentUser(): FamilyMember | null {
   const members = loadMembers();
   if (typeof window === 'undefined') return members[0] || null;
   const currentId = localStorage.getItem(KEYS.CURRENT_USER_ID);
-  return members.find(m => m.id === currentId) || members[0] || null;
+  if (currentId) {
+    const found = members.find(m => m.id === currentId);
+    if (found) return found;
+  }
+  const session = getAuthSession();
+  if (session?.member) return session.member;
+  return members[0] || null;
 }
 
 export function setCurrentUser(memberId: string) {

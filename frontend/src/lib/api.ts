@@ -26,49 +26,29 @@ function getAuthHeaders(): Record<string, string> {
   return headers;
 }
 
-async function fetchWithFallback<T>(
-  url: string,
-  options?: RequestInit,
-  fallbackFn?: () => T | Promise<T>
-): Promise<T> {
-  if (FORCE_MOCK && fallbackFn) {
-    return fallbackFn();
-  }
-
-  try {
-    const authHeaders = getAuthHeaders();
-    const mergedHeaders = {
-      ...authHeaders,
-      ...(options?.headers as Record<string, string> || {})
-    };
-
-    const res = await fetch(url, {
-      ...options,
-      headers: mergedHeaders
-    });
-
-    if (res.ok) {
-      const data = (await res.json()) as T;
-      return data;
-    }
-  } catch (error) {
-    console.info(`API call to ${url} offline or fallback:`, error);
-  }
-
-  if (fallbackFn) {
-    return fallbackFn();
-  }
-  throw new Error(`API request to ${url} failed and no fallback provided.`);
-}
-
 export const Api = {
   // Members
   async getMembers(): Promise<FamilyMember[]> {
-    const mems = await fetchWithFallback('/api/members', { method: 'GET' }, () => storage.loadMembers());
-    if (mems) {
-      storage.saveMembers(mems);
-    }
-    return mems || [];
+    const local = storage.loadMembers();
+    const session = storage.getAuthSession();
+    if (!session) return [];
+
+    try {
+      const res = await fetch(`/api/members?householdId=${session.household.id}`, {
+        headers: getAuthHeaders()
+      });
+      if (res.ok) {
+        const mems = (await res.json()) as FamilyMember[];
+        if (Array.isArray(mems) && mems.length > 0) {
+          storage.saveMembers(mems);
+          return mems;
+        }
+      }
+    } catch {}
+
+    if (local.length > 0) return local;
+    if (session?.member) return [session.member];
+    return [];
   },
 
   async updateMember(member: FamilyMember): Promise<FamilyMember> {
@@ -81,14 +61,11 @@ export const Api = {
     else members.push(normalized);
     storage.saveMembers(members);
 
-    fetchWithFallback(
-      '/api/members',
-      {
-        method: 'PUT',
-        body: JSON.stringify(normalized)
-      },
-      () => normalized
-    ).catch(() => {});
+    fetch('/api/members', {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(normalized)
+    }).catch(() => {});
 
     return normalized;
   },
@@ -112,14 +89,11 @@ export const Api = {
     members.push(newM);
     storage.saveMembers(members);
 
-    fetchWithFallback(
-      '/api/members',
-      {
-        method: 'POST',
-        body: JSON.stringify(newM)
-      },
-      () => newM
-    ).catch(() => {});
+    fetch('/api/members', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(newM)
+    }).catch(() => {});
 
     return newM;
   },
@@ -128,17 +102,40 @@ export const Api = {
     const members = storage.loadMembers().filter(m => m.id !== id);
     storage.saveMembers(members);
 
-    fetchWithFallback(`/api/members?id=${id}`, { method: 'DELETE' }, () => true).catch(() => {});
+    fetch(`/api/members?id=${id}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders()
+    }).catch(() => {});
+
     return true;
   },
 
   // Shopping Items
   async getShoppingItems(): Promise<ShoppingItem[]> {
-    const items = await fetchWithFallback('/api/shopping', { method: 'GET' }, () => storage.loadShoppingItems());
-    if (items) {
-      storage.saveShoppingItems(items);
-    }
-    return items || [];
+    const local = storage.loadShoppingItems();
+    const session = storage.getAuthSession();
+    if (!session) return [];
+
+    try {
+      const res = await fetch(`/api/shopping?householdId=${session.household.id}`, {
+        headers: getAuthHeaders()
+      });
+      if (res.ok) {
+        const serverItems = (await res.json()) as ShoppingItem[];
+        if (Array.isArray(serverItems)) {
+          // Merge server items with any recently created local items to prevent race-condition wiping
+          const serverIds = new Set(serverItems.map(i => i.id));
+          const unsynced = local.filter(
+            i => !serverIds.has(i.id) && Date.now() - new Date(i.createdAt).getTime() < 15000
+          );
+          const merged = [...unsynced, ...serverItems];
+          storage.saveShoppingItems(merged);
+          return merged;
+        }
+      }
+    } catch {}
+
+    return local;
   },
 
   async addShoppingItem(item: Partial<ShoppingItem>): Promise<ShoppingItem> {
@@ -148,25 +145,24 @@ export const Api = {
       householdId: item.householdId || householdId,
       title: item.title!,
       category: item.category || 'Sonstiges',
-      quantity: item.quantity,
+      quantity: item.quantity || 1,
       unit: item.unit,
       assignedMemberId: item.assignedMemberId,
       completed: !!item.completed,
       createdAt: new Date().toISOString()
     };
 
+    // Save immediately locally so UI reflects change instantly
     const items = storage.loadShoppingItems();
     items.unshift(newItem);
     storage.saveShoppingItems(items);
 
-    fetchWithFallback(
-      '/api/shopping',
-      {
-        method: 'POST',
-        body: JSON.stringify(newItem)
-      },
-      () => newItem
-    ).catch(() => {});
+    // Sync to backend
+    fetch('/api/shopping', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(newItem)
+    }).catch(() => {});
 
     return newItem;
   },
@@ -177,14 +173,11 @@ export const Api = {
     if (idx >= 0) items[idx] = item;
     storage.saveShoppingItems(items);
 
-    fetchWithFallback(
-      '/api/shopping',
-      {
-        method: 'PUT',
-        body: JSON.stringify(item)
-      },
-      () => item
-    ).catch(() => {});
+    fetch('/api/shopping', {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(item)
+    }).catch(() => {});
 
     return item;
   },
@@ -205,14 +198,11 @@ export const Api = {
 
     storage.saveShoppingItems(items);
 
-    fetchWithFallback(
-      '/api/shopping',
-      {
-        method: 'PUT',
-        body: JSON.stringify(item)
-      },
-      () => item
-    ).catch(() => {});
+    fetch('/api/shopping', {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(item)
+    }).catch(() => {});
 
     return item;
   },
@@ -221,7 +211,11 @@ export const Api = {
     const items = storage.loadShoppingItems().filter(i => i.id !== id);
     storage.saveShoppingItems(items);
 
-    fetchWithFallback(`/api/shopping?id=${id}`, { method: 'DELETE' }, () => true).catch(() => {});
+    fetch(`/api/shopping?id=${id}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders()
+    }).catch(() => {});
+
     return true;
   },
 
@@ -229,22 +223,43 @@ export const Api = {
     const items = storage.loadShoppingItems().filter(i => !i.completed);
     storage.saveShoppingItems(items);
 
-    fetchWithFallback('/api/shopping?action=clear_completed', { method: 'DELETE' }, () => true).catch(() => {});
+    fetch('/api/shopping?action=clear_completed', {
+      method: 'DELETE',
+      headers: getAuthHeaders()
+    }).catch(() => {});
+
     return true;
   },
 
   // Calendar Events
   async getCalendarEvents(): Promise<CalendarEvent[]> {
-    const events = await fetchWithFallback('/api/calendar', { method: 'GET' }, () => storage.loadCalendarEvents());
-    if (events) {
-      const normalized = events.map(e => ({
-        ...e,
-        date: (e.date || '').split('T')[0]
-      }));
-      storage.saveCalendarEvents(normalized);
-      return normalized;
-    }
-    return storage.loadCalendarEvents() || [];
+    const local = storage.loadCalendarEvents();
+    const session = storage.getAuthSession();
+    if (!session) return [];
+
+    try {
+      const res = await fetch(`/api/calendar?householdId=${session.household.id}`, {
+        headers: getAuthHeaders()
+      });
+      if (res.ok) {
+        const events = (await res.json()) as CalendarEvent[];
+        if (Array.isArray(events)) {
+          const normalized = events.map(e => ({
+            ...e,
+            date: (e.date || '').split('T')[0]
+          }));
+          const serverIds = new Set(normalized.map(e => e.id));
+          const unsynced = local.filter(
+            e => !serverIds.has(e.id) && Date.now() - new Date(e.createdAt).getTime() < 15000
+          );
+          const merged = [...unsynced, ...normalized];
+          storage.saveCalendarEvents(merged);
+          return merged;
+        }
+      }
+    } catch {}
+
+    return local;
   },
 
   async addCalendarEvent(event: Partial<CalendarEvent>): Promise<CalendarEvent> {
@@ -277,14 +292,11 @@ export const Api = {
     });
     storage.saveCalendarEvents(events);
 
-    fetchWithFallback(
-      '/api/calendar',
-      {
-        method: 'POST',
-        body: JSON.stringify(newEvent)
-      },
-      () => newEvent
-    ).catch(() => {});
+    fetch('/api/calendar', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(newEvent)
+    }).catch(() => {});
 
     return newEvent;
   },
@@ -299,14 +311,11 @@ export const Api = {
     if (idx >= 0) events[idx] = normalized;
     storage.saveCalendarEvents(events);
 
-    fetchWithFallback(
-      '/api/calendar',
-      {
-        method: 'PUT',
-        body: JSON.stringify(normalized)
-      },
-      () => normalized
-    ).catch(() => {});
+    fetch('/api/calendar', {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(normalized)
+    }).catch(() => {});
 
     return normalized;
   },
@@ -315,17 +324,39 @@ export const Api = {
     const events = storage.loadCalendarEvents().filter(e => e.id !== id);
     storage.saveCalendarEvents(events);
 
-    fetchWithFallback(`/api/calendar?id=${id}`, { method: 'DELETE' }, () => true).catch(() => {});
+    fetch(`/api/calendar?id=${id}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders()
+    }).catch(() => {});
+
     return true;
   },
 
   // Feed Posts
   async getFeedPosts(): Promise<FeedPost[]> {
-    const posts = await fetchWithFallback('/api/feed', { method: 'GET' }, () => storage.loadFeedPosts());
-    if (posts) {
-      storage.saveFeedPosts(posts);
-    }
-    return posts || [];
+    const local = storage.loadFeedPosts();
+    const session = storage.getAuthSession();
+    if (!session) return [];
+
+    try {
+      const res = await fetch(`/api/feed?householdId=${session.household.id}`, {
+        headers: getAuthHeaders()
+      });
+      if (res.ok) {
+        const posts = (await res.json()) as FeedPost[];
+        if (Array.isArray(posts)) {
+          const serverIds = new Set(posts.map(p => p.id));
+          const unsynced = local.filter(
+            p => !serverIds.has(p.id) && Date.now() - new Date(p.timestamp).getTime() < 15000
+          );
+          const merged = [...unsynced, ...posts];
+          storage.saveFeedPosts(merged);
+          return merged;
+        }
+      }
+    } catch {}
+
+    return local;
   },
 
   async addFeedPost(post: Partial<FeedPost>): Promise<FeedPost> {
@@ -348,14 +379,11 @@ export const Api = {
     posts.unshift(newPost);
     storage.saveFeedPosts(posts);
 
-    fetchWithFallback(
-      '/api/feed',
-      {
-        method: 'POST',
-        body: JSON.stringify(newPost)
-      },
-      () => newPost
-    ).catch(() => {});
+    fetch('/api/feed', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(newPost)
+    }).catch(() => {});
 
     return newPost;
   },
@@ -376,14 +404,11 @@ export const Api = {
       storage.saveFeedPosts(posts);
     }
 
-    fetchWithFallback(
-      '/api/feed?action=comment',
-      {
-        method: 'POST',
-        body: JSON.stringify({ postId, content, authorId })
-      },
-      () => post || null
-    ).catch(() => {});
+    fetch('/api/feed?action=comment', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ postId, content, authorId })
+    }).catch(() => {});
 
     return post || null;
   },
@@ -408,14 +433,11 @@ export const Api = {
 
     storage.saveFeedPosts(posts);
 
-    fetchWithFallback(
-      '/api/feed',
-      {
-        method: 'PUT',
-        body: JSON.stringify(post)
-      },
-      () => post
-    ).catch(() => {});
+    fetch('/api/feed', {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(post)
+    }).catch(() => {});
 
     return post;
   },
@@ -460,6 +482,14 @@ export const Api = {
 
   // Subscription Status
   async getSubscription(): Promise<SubscriptionStatus> {
-    return fetchWithFallback('/api/billing', { method: 'GET' }, () => storage.loadSubscription());
+    try {
+      const res = await fetch('/api/billing', { headers: getAuthHeaders() });
+      if (res.ok) {
+        const sub = await res.json();
+        storage.saveSubscription(sub);
+        return sub;
+      }
+    } catch {}
+    return storage.loadSubscription();
   }
 };

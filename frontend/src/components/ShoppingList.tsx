@@ -109,13 +109,27 @@ export const ShoppingList: React.FC<ShoppingListProps> = ({ onOpenVoice }) => {
   };
 
   const handleAddQuickSuggestion = async (sugg: { title: string; category: ShoppingCategory; unit?: string }) => {
-    await Api.addShoppingItem({
-      title: sugg.title,
-      category: sugg.category,
-      quantity: 1,
-      unit: sugg.unit,
-      assignedMemberId: currentUser?.id
-    });
+    // Check if item already exists in open items
+    const existing = items.find(
+      i => !i.completed && i.title.toLowerCase() === sugg.title.toLowerCase()
+    );
+
+    if (existing) {
+      await handleAdjustQuantity(existing, 1);
+    } else {
+      await Api.addShoppingItem({
+        title: sugg.title,
+        category: sugg.category,
+        quantity: 1,
+        unit: sugg.unit,
+        assignedMemberId: currentUser?.id
+      });
+    }
+
+    try {
+      confetti({ particleCount: 15, spread: 35, origin: { y: 0.85 } });
+    } catch {}
+
     await loadData();
   };
 
