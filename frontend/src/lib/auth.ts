@@ -3,6 +3,19 @@ import { saveAuthSession, clearAuthSession, getAuthSession } from './storage';
 
 export const AuthService = {
   /**
+   * Self-healing session sync: Ensures household & user exist on server
+   */
+  async syncSession(session: AuthSession): Promise<void> {
+    try {
+      await fetch('/api/auth?action=sync-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(session)
+      });
+    } catch {}
+  },
+
+  /**
    * Register a new user with email, password, and create/join household
    */
   async register(data: RegisterRequest): Promise<{

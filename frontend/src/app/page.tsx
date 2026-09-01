@@ -11,6 +11,7 @@ import { VoiceAssistant } from '../components/VoiceAssistant';
 import { PremiumModal } from '../components/PremiumModal';
 import { AuthView } from '../components/AuthView';
 import { getAuthSession } from '../lib/storage';
+import { AuthService } from '../lib/auth';
 import { AuthSession } from '../lib/types';
 import {
   LayoutDashboard,
@@ -33,10 +34,17 @@ export default function Home() {
     setSession(currentSession);
     setIsAuthChecked(true);
 
+    if (currentSession) {
+      AuthService.syncSession(currentSession).catch(() => {});
+    }
+
     const handleDataChange = (e: any) => {
       if (e?.detail?.resource === 'auth') {
         const s = getAuthSession();
         setSession(s);
+        if (s) {
+          AuthService.syncSession(s).catch(() => {});
+        }
       }
     };
 

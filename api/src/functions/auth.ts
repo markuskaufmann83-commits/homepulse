@@ -465,6 +465,35 @@ export async function authHandler(req: HttpRequest, context: InvocationContext):
       };
     }
 
+    // ==========================================
+    // ACTION: SYNC SESSION (Self-healing household & user sync)
+    // ==========================================
+    if (action === 'sync-session') {
+      const session = (await req.json()) as AuthSession;
+      if (session && session.household && session.household.id) {
+        await saveItem<Household>('households', session.household);
+        if (session.user && session.user.id) {
+          const existingUser = await getItemById<User>('users', session.user.id);
+          if (!existingUser) {
+            await saveItem<User>('users', {
+              id: session.user.id,
+              email: session.user.email,
+              name: session.user.name,
+              householdId: session.household.id,
+              role: session.user.role,
+              emailVerified: session.user.emailVerified,
+              createdAt: new Date().toISOString()
+            });
+          }
+        }
+        if (session.member && session.member.id) {
+          await saveItem<FamilyMember>('members', session.member);
+        }
+        return { status: 200, headers, body: JSON.stringify({ success: true, household: session.household }) };
+      }
+      return { status: 400, headers, body: JSON.stringify({ error: 'Invalid session payload' }) };
+    }
+
     // =========================================================================
     // 6. LOGIN
     // =========================================================================
