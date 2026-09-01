@@ -1,7 +1,6 @@
 import { CalendarEvent, GoogleCalendarConfig } from './types';
 import { parseIcs } from './ical';
 import { loadCalendarEvents, saveCalendarEvents, getActiveHouseholdId } from './storage';
-import { formatLocalDate } from './dateUtils';
 
 const GCAL_CONFIG_KEY = 'homepulse_gcal_configs_v1';
 
@@ -81,20 +80,10 @@ export const GoogleCalendarService = {
       }
 
       if (!icsContent || !icsContent.includes('BEGIN:VCALENDAR')) {
-        // Generate realistic sample synced Google events for this member
-        const sampleSyncedEvents = this.generateSampleGoogleEvents(memberId);
-        this.mergeSyncedEvents(sampleSyncedEvents, memberId);
-
-        const config = this.getMemberConfig(memberId);
-        config.iCalUrl = cleanUrl;
-        config.lastSync = new Date().toISOString();
-        config.syncStatus = 'success';
-        this.saveMemberConfig(config);
-
         return {
-          success: true,
-          count: sampleSyncedEvents.length,
-          message: `${sampleSyncedEvents.length} Termine aus Google Kalender erfolgreich synchronisiert!`
+          success: false,
+          count: 0,
+          message: 'Die angegebene Google Kalender URL konnte nicht abgerufen werden. Bitte prüfe den iCal-Link.'
         };
       }
 
@@ -184,50 +173,5 @@ export const GoogleCalendarService = {
         body: JSON.stringify(ev)
       }).catch(() => {});
     }
-  },
-
-  /**
-   * Demo sample events generator for instant testing
-   */
-  generateSampleGoogleEvents(memberId: string): CalendarEvent[] {
-    const today = new Date();
-    const householdId = getActiveHouseholdId();
-    const getOffset = (days: number) => {
-      const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + days, 12, 0, 0);
-      return formatLocalDate(d);
-    };
-
-    return [
-      {
-        id: `gcal_demo_1_${Date.now()}`,
-        householdId,
-        title: 'Team-Meeting (Google Kalender)',
-        description: 'Wöchentliches Status-Update via Google Meet',
-        date: getOffset(1),
-        time: '10:00',
-        endTime: '11:00',
-        location: 'Google Meet',
-        assignedMemberIds: [memberId],
-        category: 'Arbeit',
-        isGoogleSynced: true,
-        externalSource: 'google_calendar',
-        createdAt: new Date().toISOString()
-      },
-      {
-        id: `gcal_demo_2_${Date.now()}`,
-        householdId,
-        title: 'Projekt-Präsentation (Gmail/Google)',
-        description: 'Vorbereitete Folien besprechen',
-        date: getOffset(3),
-        time: '14:30',
-        endTime: '15:30',
-        location: 'Büro / Online',
-        assignedMemberIds: [memberId],
-        category: 'Arbeit',
-        isGoogleSynced: true,
-        externalSource: 'google_calendar',
-        createdAt: new Date().toISOString()
-      }
-    ];
   }
 };

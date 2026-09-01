@@ -42,6 +42,7 @@ export async function shoppingHandler(req: HttpRequest, context: InvocationConte
         return { status: 400, headers, body: JSON.stringify({ error: 'Title is required' }) };
       }
 
+      const now = new Date().toISOString();
       const newItem: ShoppingItem = {
         id: data.id || `shop_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
         householdId: data.householdId || householdId,
@@ -53,7 +54,8 @@ export async function shoppingHandler(req: HttpRequest, context: InvocationConte
         completed: !!data.completed,
         completedBy: data.completedBy,
         completedAt: data.completedAt,
-        createdAt: data.createdAt || new Date().toISOString()
+        createdAt: data.createdAt || now,
+        updatedAt: data.updatedAt || now
       };
 
       const saved = await saveItem<ShoppingItem>(CONTAINER, newItem);
@@ -67,6 +69,7 @@ export async function shoppingHandler(req: HttpRequest, context: InvocationConte
       }
 
       data.householdId = data.householdId || householdId;
+      data.updatedAt = new Date().toISOString();
       const updated = await saveItem<ShoppingItem>(CONTAINER, data);
       return { status: 200, headers, body: JSON.stringify(updated) };
     }

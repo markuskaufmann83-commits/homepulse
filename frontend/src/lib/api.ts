@@ -123,12 +123,28 @@ export const Api = {
       if (res.ok) {
         const serverItems = (await res.json()) as ShoppingItem[];
         if (Array.isArray(serverItems)) {
-          // Merge server items with any recently created local items to prevent race-condition wiping
+          const localMap = new Map(local.map(i => [i.id, i]));
+          const merged: ShoppingItem[] = serverItems.map(serverItem => {
+            const localItem = localMap.get(serverItem.id);
+            // If local item was created or toggled/modified in the last 20 seconds, preserve local completed state
+            if (localItem) {
+              const localTime = new Date(localItem.updatedAt || localItem.createdAt).getTime();
+              const serverTime = new Date(serverItem.updatedAt || serverItem.createdAt).getTime();
+              if (localTime > serverTime || Date.now() - localTime < 20000) {
+                return localItem;
+              }
+            }
+            return serverItem;
+          });
+
+          // Also include any new local items not yet in serverItems
           const serverIds = new Set(serverItems.map(i => i.id));
-          const unsynced = local.filter(
-            i => !serverIds.has(i.id) && Date.now() - new Date(i.createdAt).getTime() < 15000
-          );
-          const merged = [...unsynced, ...serverItems];
+          for (const loc of local) {
+            if (!serverIds.has(loc.id)) {
+              merged.unshift(loc);
+            }
+          }
+
           storage.saveShoppingItems(merged);
           return merged;
         }
@@ -140,6 +156,7 @@ export const Api = {
 
   async addShoppingItem(item: Partial<ShoppingItem>): Promise<ShoppingItem> {
     const householdId = storage.getActiveHouseholdId();
+    const now = new Date().toISOString();
     const newItem: ShoppingItem = {
       id: item.id || `shop_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       householdId: item.householdId || householdId,
@@ -149,7 +166,8 @@ export const Api = {
       unit: item.unit,
       assignedMemberId: item.assignedMemberId,
       completed: !!item.completed,
-      createdAt: new Date().toISOString()
+      createdAt: now,
+      updatedAt: now
     };
 
     // Save immediately locally so UI reflects change instantly
@@ -168,18 +186,21 @@ export const Api = {
   },
 
   async updateShoppingItem(item: ShoppingItem): Promise<ShoppingItem> {
+    const now = new Date().toISOString();
+    const updated = { ...item, updatedAt: now };
+
     const items = storage.loadShoppingItems();
-    const idx = items.findIndex(i => i.id === item.id);
-    if (idx >= 0) items[idx] = item;
+    const idx = items.findIndex(i => i.id === updated.id);
+    if (idx >= 0) items[idx] = updated;
     storage.saveShoppingItems(items);
 
     fetch('/api/shopping', {
       method: 'PUT',
       headers: getAuthHeaders(),
-      body: JSON.stringify(item)
+      body: JSON.stringify(updated)
     }).catch(() => {});
 
-    return item;
+    return updated;
   },
 
   async toggleShoppingItem(id: string, memberName?: string): Promise<ShoppingItem | null> {
@@ -187,10 +208,13 @@ export const Api = {
     const item = items.find(i => i.id === id);
     if (!item) return null;
 
+    const now = new Date().toISOString();
     item.completed = !item.completed;
+    item.updatedAt = now;
+
     if (item.completed) {
       item.completedBy = memberName || 'Jemand';
-      item.completedAt = new Date().toISOString();
+      item.completedAt = now;
     } else {
       delete item.completedBy;
       delete item.completedAt;

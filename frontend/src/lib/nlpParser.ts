@@ -1,100 +1,110 @@
-import { AiAction, ShoppingCategory, MemberStatus } from './types';
+import { AiAction, ShoppingCategory, MemberStatus, FeedPostType } from './types';
 import { formatLocalDate } from './dateUtils';
 
+/**
+ * German Natural Language Parser for Voice & Text Commands
+ * Dynamically uses the household's actual family members
+ */
 export function parseGermanTextLocally(
   text: string,
-  knownMembers: string[] = ['Papa', 'Mama', 'Mia', 'Jonas', 'Papa Thomas', 'Mama Lisa']
+  knownMembers: string[] = []
 ): AiAction[] {
   const actions: AiAction[] = [];
   const clean = text.trim();
+  if (!clean) return actions;
+
+  // Split multi-action phrases by "und", ";", "."
+  const subClauses = clean.split(/(?:\s+und\s+|\s*;\s*|\s*\.\s*)/i);
 
   const findAssignedPerson = (clause: string): string | undefined => {
-    for (const member of knownMembers) {
-      const regex = new RegExp(`(?:für|von|mit|an)\\s+${member}`, 'i');
-      if (regex.test(clause)) return member;
-    }
-    for (const member of knownMembers) {
-      const regex = new RegExp(`\\b${member}\\b`, 'i');
-      if (regex.test(clause)) return member;
+    for (const name of knownMembers) {
+      if (!name) continue;
+      const regex = new RegExp(`\\b(?:für|von|mit|an)\\s+${name}\\b|\\b${name}\\b`, 'i');
+      if (regex.test(clause)) {
+        return name;
+      }
     }
     return undefined;
   };
-
-  const categorizeItem = (name: string): ShoppingCategory => {
-    const lower = name.toLowerCase();
-    if (/milch|käse|joghurt|butter|quark|sahne|eier|bio-eier|tofu|fleisch|wurst|schinken/i.test(lower)) return 'Frische';
-    if (/apfel|äpfel|banane|bananen|salat|gurke|tomate|tomaten|zwiebel|karotten|kartoffeln|beeren/i.test(lower)) return 'Obst & Gemüse';
-    if (/brot|mehl|zucker|nudeln|pasta|reis|haferflocken|müsli|öl|olivenöl|konserve|sauce/i.test(lower)) return 'Vorrat';
-    if (/shampoo|seife|zahnpasta|toilettenpapier|spülmittel|waschmittel|deo|taschentücher/i.test(lower)) return 'Drogerie';
-    if (/wasser|saft|cola|bier|wein|kaffee|tee|sprudel/i.test(lower)) return 'Getränke';
-    if (/pizza|eis|spinat|tiefkühl|pommes/i.test(lower)) return 'Tiefkühl';
-    return 'Sonstiges';
-  };
-
-  // Split into clauses
-  const subClauses = clean.split(/(?:\s+und\s+|\s*;\s*|\s*\.\s*)/i);
 
   for (const clause of subClauses) {
     const trimmed = clause.trim();
     if (!trimmed) continue;
 
-    // 1. Calendar match (Trage ein / Kalendereintrag / Termin / Geburtstag / Meeting / Uhr / Training / Arzt...)
-    if (/kalender|termin|geburtstag|meeting|treffen|training|zahnarzt|arzt|uhr|elternabend|filmabend|eintragen/i.test(trimmed)) {
-      let title = 'Termin';
-      let time = '12:00';
-      const today = new Date();
-      let targetDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 12, 0, 0);
+    // 1. Status Update Command ("Bin auf dem Heimweg", "Papa ist im Büro", "komme nach Hause")
+    if (/heimweg|unterwegs|im büro|auf der arbeit|in der schule|zuhause|im urlaub|krank/i.test(trimmed)) {
+      const assigned = findAssignedPerson(trimmed) || (knownMembers.length > 0 ? knownMembers[0] : 'Ich');
+      let newStatus: MemberStatus = 'home';
+      if (/heimweg|unterwegs/i.test(trimmed)) newStatus = 'away';
+      else if (/büro|arbeit/i.test(trimmed)) newStatus = 'work';
+      else if (/schule|uni/i.test(trimmed)) newStatus = 'school';
+      else if (/urlaub/i.test(trimmed)) newStatus = 'vacation';
 
-      // Time match (e.g. "16 Uhr", "16:30", "16:00 Uhr", "um 9 Uhr")
-      const timeMatch = trimmed.match(/(?:um\s*)?(\d{1,2})(?::(\d{2}))?\s*(?:uhr)?/i);
-      if (timeMatch && (trimmed.toLowerCase().includes('uhr') || timeMatch[0].includes('um') || timeMatch[2])) {
-        const hours = timeMatch[1].padStart(2, '0');
-        const mins = timeMatch[2] || '00';
-        if (parseInt(hours, 10) <= 24) {
-          time = `${hours}:${mins}`;
+      actions.push({
+        type: 'STATUS_UPDATE',
+        memberName: assigned,
+        newStatus,
+        statusMessage: trimmed
+      });
+      continue;
+    }
+
+    // 2. Calendar Event Command ("Trage für morgen 15 Uhr Zahnarzttermin im Kalender ein")
+    if (/kalender|termin|geburtstag|meeting|treffen|training|zahnarzt|arzt|uhr|elternabend|filmabend|eintragen/i.test(trimmed)) {
+      let dateStr = formatLocalDate(new Date());
+
+      // Parse relative date keywords
+      const tomorrowMatch = /morgen\b/i.test(trimmed);
+      const dayAfterTomorrow = /übermorgen\b/i.test(trimmed);
+
+      if (dayAfterTomorrow) {
+        const d = new Date();
+        d.setDate(d.getDate() + 2);
+        dateStr = formatLocalDate(d);
+      } else if (tomorrowMatch) {
+        const d = new Date();
+        d.setDate(d.getDate() + 1);
+        dateStr = formatLocalDate(d);
+      } else {
+        // Weekday matching
+        const weekdays = ['sonntag', 'montag', 'dienstag', 'mittwoch', 'donnerstag', 'freitag', 'samstag'];
+        for (let i = 0; i < weekdays.length; i++) {
+          if (new RegExp(`\\b${weekdays[i]}\\b`, 'i').test(trimmed)) {
+            const today = new Date();
+            const currentDay = today.getDay();
+            let diff = i - currentDay;
+            if (diff <= 0) diff += 7; // Next occurrence
+            const targetDate = new Date();
+            targetDate.setDate(today.getDate() + diff);
+            dateStr = formatLocalDate(targetDate);
+            break;
+          }
         }
       }
 
-      // Date match
-      const dayNames = ['sonntag', 'montag', 'dienstag', 'mittwoch', 'donnerstag', 'freitag', 'samstag'];
-      const matchedDay = dayNames.find(d => new RegExp(`\\b${d}\\b`, 'i').test(trimmed));
-
-      if (matchedDay) {
-        const targetDayIndex = dayNames.indexOf(matchedDay);
-        const currentDayIndex = today.getDay();
-        let daysToAdd = (targetDayIndex - currentDayIndex + 7) % 7;
-        if (daysToAdd === 0 && !/heute/i.test(trimmed)) daysToAdd = 7;
-        targetDate.setDate(today.getDate() + daysToAdd);
-      } else if (/übermorgen/i.test(trimmed)) {
-        targetDate.setDate(today.getDate() + 2);
-      } else if (/morgen/i.test(trimmed)) {
-        targetDate.setDate(today.getDate() + 1);
-      } else if (/heute/i.test(trimmed)) {
-        targetDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 12, 0, 0);
+      // Time extraction ("um 15 Uhr", "15:30", "15 Uhr")
+      let time: string | undefined = undefined;
+      const timeMatch = trimmed.match(/(?:um\s*)?(\d{1,2})(?::(\d{2}))?\s*(?:uhr)?/i);
+      if (timeMatch && (timeMatch[0].includes('uhr') || timeMatch[0].includes(':') || trimmed.includes('um '))) {
+        const hours = timeMatch[1].padStart(2, '0');
+        const mins = timeMatch[2] ? timeMatch[2] : '00';
+        time = `${hours}:${mins}`;
       }
 
-      const dateStr = formatLocalDate(targetDate);
-
-      // Extract Clean Title
+      // Title cleaning
       let extractedTitle = trimmed
-        .replace(/(?:trage|erstell[e]?|setz[e]?|plan[e]?|füge|merke|trag|mach[e]?|im kalender|in den kalender|als termin|als kalendereintrag|auf die liste|kalendereintrag|kalender|termin)/gi, '')
+        .replace(/(?:trage|erstell[e]?|setz[e]?|plan[e]?|füge|merke|trag|mach[e]?|im kalender|in den kalender|als termin|als kalendereintrag|auf die liste|kalendereintrag|kalender|termin|ein)/gi, '')
         .replace(/(?:am|für)\s+(?:montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag|morgen|übermorgen|heute|\d{1,2}\.\d{1,2}\.?)/gi, '')
         .replace(/(?:(?:\bum\s*)?\d{1,2}(?::\d{2})?\s*uhr\b|\bum\s*\d{1,2}(?::\d{2})?\b)/gi, '')
-        .replace(/(?:für|mit|von)\s+(?:Papa|Mama|Mia|Jonas|Alle|Papa Thomas|Mama Lisa)/gi, '')
         .replace(/^(?:ein|den|das|einen|eines|zum|beim)\s+/i, '')
         .trim();
 
-      if (extractedTitle.length > 1) {
-        title = extractedTitle.charAt(0).toUpperCase() + extractedTitle.slice(1);
-      } else if (/kindergeburtstag/i.test(trimmed)) {
-        title = 'Kindergeburtstag';
-      } else if (/fußball|fussball/i.test(trimmed)) {
-        title = 'Fußballtraining';
-      } else if (/zahnarzt/i.test(trimmed)) {
-        title = 'Zahnarzttermin';
-      } else if (/arzt/i.test(trimmed)) {
-        title = 'Arzttermin';
+      // Clean known member names from title
+      for (const name of knownMembers) {
+        extractedTitle = extractedTitle.replace(new RegExp(`(?:für|mit|von)\\s+${name}`, 'gi'), '').trim();
       }
+
+      const title = extractedTitle.charAt(0).toUpperCase() + extractedTitle.slice(1);
 
       actions.push({
         type: 'CALENDAR_ADD',
@@ -106,55 +116,60 @@ export function parseGermanTextLocally(
       continue;
     }
 
-    // 2. Shopping match
-    if (/einkaufsliste|liste|kaufen|kauf|besorgen|mitbringen|bio-eier|hafermilch|eier|milch|brot|butter|äpfel|bananen|käse/i.test(trimmed)) {
-      const assigned = findAssignedPerson(trimmed);
-      let itemsString = trimmed
-        .replace(/(?:setz[e]?|pack[e]?|schreib[e]?|füg[e]?|kauf[e]?|bring[e]?|bitte|noch)\s+/gi, '')
-        .replace(/(?:auf die einkaufsliste|auf die liste|zum einkaufen|dazu|auf meine liste)/gi, '')
-        .replace(/(?:für|von)\s+(?:Papa|Mama|Mia|Jonas|Papa Thomas|Mama Lisa)/gi, '')
-        .replace(/^(?:mal|bitte|auch)\s+/i, '')
+    // 3. Pinnwand / Feed Post Command
+    if (/pinnwand|notiz|post|nachricht|schreib|sag allen/i.test(trimmed)) {
+      const content = trimmed
+        .replace(/(?:auf die pinnwand|an die pinnwand|als notiz|schreib[e]?|poste|sag allen)/gi, '')
         .trim();
 
-      const rawItems = itemsString.split(/(?:,|\s+und\s+|\s+sowie\s+)/i);
-      for (const rawItem of rawItems) {
-        const itemClean = rawItem.replace(/^(?:den|das|die|ein|eine|einen|2|3|4|10|packung|liter|kg|flasche|dose)\s+/i, '').trim();
-        if (itemClean.length > 1 && !/^(liste|einkaufen)$/i.test(itemClean)) {
-          const capitalized = itemClean.charAt(0).toUpperCase() + itemClean.slice(1);
-          actions.push({
-            type: 'SHOPPING_ADD',
-            item: capitalized,
-            category: categorizeItem(capitalized),
-            assignedTo: assigned || 'Papa'
-          });
-        }
-      }
-      continue;
-    }
-
-    // 3. Status update
-    if (/bin daheim|bin zuhause|auf dem heimweg|unterwegs|in der arbeit|im büro|in der schule/i.test(trimmed)) {
-      let status: MemberStatus = 'home';
-      if (/heimweg|unterwegs/i.test(trimmed)) status = 'away';
-      if (/arbeit|büro/i.test(trimmed)) status = 'work';
-      if (/schule/i.test(trimmed)) status = 'school';
-
       actions.push({
-        type: 'STATUS_UPDATE',
-        memberName: findAssignedPerson(trimmed) || 'Papa',
-        newStatus: status,
-        statusMessage: trimmed
+        type: 'FEED_POST',
+        content: content || trimmed,
+        postType: 'note',
+        author: findAssignedPerson(trimmed) || (knownMembers.length > 0 ? knownMembers[0] : 'Ich')
       });
       continue;
     }
 
-    // 4. Feed note fallback
-    if (trimmed.length > 5) {
+    // 4. Default: Shopping List Item Command ("Kauf Milch", "Setze Brot auf die Liste")
+    const qtyMatch = trimmed.match(/(\d+(?:[.,]\d+)?)\s*(kg|g|l|liter|flaschen?|packungen?|pck|stk|stück|dose[n]?)?/i);
+    let quantity: number | undefined = undefined;
+    let unit: string | undefined = undefined;
+
+    if (qtyMatch) {
+      quantity = parseFloat(qtyMatch[1].replace(',', '.'));
+      unit = qtyMatch[2] ? qtyMatch[2].toLowerCase() : undefined;
+    }
+
+    // Clean item name
+    let itemName = trimmed
+      .replace(/(?:setz[e]?|kauf[e]?|besorg[e]?|füg[e]?|pack[e]?|schreib[e]?|hol[e]?|bring[e]?|auf die einkaufsliste|auf die liste|zur einkaufsliste|zum einkauf)/gi, '')
+      .replace(/(\d+(?:[.,]\d+)?)\s*(?:kg|g|l|liter|flaschen?|packungen?|pck|stk|stück|dose[n]?)?/gi, '')
+      .replace(/^(?:ein|eine|einen|das|die|der|etwas|noch|bitte)\s+/i, '')
+      .trim();
+
+    for (const name of knownMembers) {
+      itemName = itemName.replace(new RegExp(`(?:für|von)\\s+${name}`, 'gi'), '').trim();
+    }
+
+    if (itemName) {
+      const title = itemName.charAt(0).toUpperCase() + itemName.slice(1);
+      let category: ShoppingCategory = 'Sonstiges';
+
+      if (/milch|käse|butter|joghurt|quark|sahne|eier|fleisch|wurst|fisch/i.test(title)) category = 'Frische';
+      else if (/apfel|äpfel|banane|salat|tomate|gurke|zwiebel|kartoffel|obst|gemüse/i.test(title)) category = 'Obst & Gemüse';
+      else if (/brot|nudeln|reis|mehl|zucker|kaffee|tee|öl|salz|gewürz/i.test(title)) category = 'Vorrat';
+      else if (/wasser|saft|bier|wein|cola|limonade|getränk/i.test(title)) category = 'Getränke';
+      else if (/seife|shampoo|zahnpasta|toilettenpapier|waschmittel|putzmittel/i.test(title)) category = 'Drogerie';
+      else if (/pizza|eis|spinat|pommes|tiefkühl/i.test(title)) category = 'Tiefkühl';
+
       actions.push({
-        type: 'FEED_POST',
-        content: trimmed,
-        postType: 'note',
-        author: findAssignedPerson(trimmed) || 'Familie'
+        type: 'SHOPPING_ADD',
+        item: title,
+        category,
+        quantity,
+        unit,
+        assignedTo: findAssignedPerson(trimmed)
       });
     }
   }

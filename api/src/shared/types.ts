@@ -52,6 +52,7 @@ export interface ShoppingItem {
   completedBy?: string;
   completedAt?: string;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface CalendarEvent {

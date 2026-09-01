@@ -255,9 +255,9 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({
   };
 
   const samplePrompts = [
-    'Setze Bio-Eier und Hafermilch auf die Einkaufsliste für Papa und trage für Freitag 16 Uhr Kindergeburtstag im Kalender ein',
-    'Kauf 2kg Äpfel und Vollkornbrot für Mama',
-    'Trage für morgen um 15 Uhr Zahnarzttermin im Kalender ein',
+    'Milch, Eier und Vollkornbrot auf die Einkaufsliste setzen',
+    'Trage für morgen um 15:00 Uhr Zahnarzttermin im Kalender ein',
+    'Erstelle einen Termin: Kindergeburtstag am Freitag um 16 Uhr',
     'Bin auf dem Heimweg von der Arbeit'
   ];
 

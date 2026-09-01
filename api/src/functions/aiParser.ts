@@ -1,107 +1,108 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
-import { AiAction, AiParseResponse, ShoppingCategory, MemberStatus } from '../shared/types';
+import { AiAction, AiParseResponse, ShoppingCategory, MemberStatus, FeedPostType } from '../shared/types';
 
-function formatLocalDate(d: Date): string {
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-// Intelligent deterministic fallback NLP parser for German voice/text commands
-function parseGermanTextLocally(text: string, knownMembers: string[] = ['Papa', 'Mama', 'Mia', 'Jonas', 'Papa Thomas', 'Mama Lisa']): AiAction[] {
+// Deterministic rule-based parser matching frontend
+function parseGermanTextLocally(
+  text: string,
+  knownMembers: string[] = []
+): AiAction[] {
   const actions: AiAction[] = [];
   const clean = text.trim();
+  if (!clean) return actions;
 
-  // Helper to extract assigned person if mentioned
+  const subClauses = clean.split(/(?:\s+und\s+|\s*;\s*|\s*\.\s*)/i);
+
   const findAssignedPerson = (clause: string): string | undefined => {
-    for (const member of knownMembers) {
-      const regex = new RegExp(`(?:für|von|mit|an)\\s+${member}`, 'i');
-      if (regex.test(clause)) return member;
-    }
-    for (const member of knownMembers) {
-      const regex = new RegExp(`\\b${member}\\b`, 'i');
-      if (regex.test(clause)) return member;
+    for (const name of knownMembers) {
+      if (!name) continue;
+      const regex = new RegExp(`\\b(?:für|von|mit|an)\\s+${name}\\b|\\b${name}\\b`, 'i');
+      if (regex.test(clause)) {
+        return name;
+      }
     }
     return undefined;
   };
-
-  // Helper to categorize shopping items
-  const categorizeItem = (name: string): ShoppingCategory => {
-    const lower = name.toLowerCase();
-    if (/milch|käse|joghurt|butter|quark|sahne|eier|bio-eier|tofu|fleisch|wurst|schinken/i.test(lower)) return 'Frische';
-    if (/apfel|äpfel|banane|bananen|salat|gurke|tomate|tomaten|zwiebel|karotten|kartoffeln|beeren/i.test(lower)) return 'Obst & Gemüse';
-    if (/brot|mehl|zucker|nudeln|pasta|reis|haferflocken|müsli|öl|olivenöl|konserve|sauce/i.test(lower)) return 'Vorrat';
-    if (/shampoo|seife|zahnpasta|toilettenpapier|spülmittel|waschmittel|deo|taschentücher/i.test(lower)) return 'Drogerie';
-    if (/wasser|saft|cola|bier|wein|kaffee|tee|sprudel/i.test(lower)) return 'Getränke';
-    if (/pizza|eis|spinat|tiefkühl|pommes/i.test(lower)) return 'Tiefkühl';
-    return 'Sonstiges';
-  };
-
-  // Split into clauses
-  const subClauses = clean.split(/(?:\s+und\s+|\s*;\s*|\s*\.\s*)/i);
 
   for (const clause of subClauses) {
     const trimmed = clause.trim();
     if (!trimmed) continue;
 
-    // 1. Calendar match
-    if (/kalender|termin|geburtstag|meeting|treffen|training|zahnarzt|arzt|uhr|elternabend|filmabend|eintragen/i.test(trimmed)) {
-      let title = 'Termin';
-      let time = '12:00';
-      const today = new Date();
-      let targetDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 12, 0, 0);
+    // 1. Status Update Command
+    if (/heimweg|unterwegs|im büro|auf der arbeit|in der schule|zuhause|im urlaub|krank/i.test(trimmed)) {
+      const assigned = findAssignedPerson(trimmed) || (knownMembers.length > 0 ? knownMembers[0] : 'Ich');
+      let newStatus: MemberStatus = 'home';
+      if (/heimweg|unterwegs/i.test(trimmed)) newStatus = 'away';
+      else if (/büro|arbeit/i.test(trimmed)) newStatus = 'work';
+      else if (/schule|uni/i.test(trimmed)) newStatus = 'school';
+      else if (/urlaub/i.test(trimmed)) newStatus = 'vacation';
 
-      // Time match (e.g. "16 Uhr", "16:30", "16:00 Uhr")
-      const timeMatch = trimmed.match(/(?:um\s*)?(\d{1,2})(?::(\d{2}))?\s*(?:uhr)?/i);
-      if (timeMatch && (trimmed.toLowerCase().includes('uhr') || timeMatch[0].includes('um') || timeMatch[2])) {
-        const hours = timeMatch[1].padStart(2, '0');
-        const mins = timeMatch[2] || '00';
-        if (parseInt(hours, 10) <= 24) {
-          time = `${hours}:${mins}`;
+      actions.push({
+        type: 'STATUS_UPDATE',
+        memberName: assigned,
+        newStatus,
+        statusMessage: trimmed
+      });
+      continue;
+    }
+
+    // 2. Calendar Event Command
+    if (/kalender|termin|geburtstag|meeting|treffen|training|zahnarzt|arzt|uhr|elternabend|filmabend|eintragen/i.test(trimmed)) {
+      const today = new Date();
+      const getLocalDateStr = (d: Date) => {
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      };
+
+      let dateStr = getLocalDateStr(today);
+
+      const tomorrowMatch = /morgen\b/i.test(trimmed);
+      const dayAfterTomorrow = /übermorgen\b/i.test(trimmed);
+
+      if (dayAfterTomorrow) {
+        const d = new Date();
+        d.setDate(d.getDate() + 2);
+        dateStr = getLocalDateStr(d);
+      } else if (tomorrowMatch) {
+        const d = new Date();
+        d.setDate(d.getDate() + 1);
+        dateStr = getLocalDateStr(d);
+      } else {
+        const weekdays = ['sonntag', 'montag', 'dienstag', 'mittwoch', 'donnerstag', 'freitag', 'samstag'];
+        for (let i = 0; i < weekdays.length; i++) {
+          if (new RegExp(`\\b${weekdays[i]}\\b`, 'i').test(trimmed)) {
+            const currentDay = today.getDay();
+            let diff = i - currentDay;
+            if (diff <= 0) diff += 7;
+            const targetDate = new Date();
+            targetDate.setDate(today.getDate() + diff);
+            dateStr = getLocalDateStr(targetDate);
+            break;
+          }
         }
       }
 
-      // Date match
-      const dayNames = ['sonntag', 'montag', 'dienstag', 'mittwoch', 'donnerstag', 'freitag', 'samstag'];
-      const matchedDay = dayNames.find(d => new RegExp(`\\b${d}\\b`, 'i').test(trimmed));
-
-      if (matchedDay) {
-        const targetDayIndex = dayNames.indexOf(matchedDay);
-        const currentDayIndex = today.getDay();
-        let daysToAdd = (targetDayIndex - currentDayIndex + 7) % 7;
-        if (daysToAdd === 0 && !/heute/i.test(trimmed)) daysToAdd = 7;
-        targetDate.setDate(today.getDate() + daysToAdd);
-      } else if (/übermorgen/i.test(trimmed)) {
-        targetDate.setDate(today.getDate() + 2);
-      } else if (/morgen/i.test(trimmed)) {
-        targetDate.setDate(today.getDate() + 1);
-      } else if (/heute/i.test(trimmed)) {
-        targetDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 12, 0, 0);
+      let time: string | undefined = undefined;
+      const timeMatch = trimmed.match(/(?:um\s*)?(\d{1,2})(?::(\d{2}))?\s*(?:uhr)?/i);
+      if (timeMatch && (timeMatch[0].includes('uhr') || timeMatch[0].includes(':') || trimmed.includes('um '))) {
+        const hours = timeMatch[1].padStart(2, '0');
+        const mins = timeMatch[2] ? timeMatch[2] : '00';
+        time = `${hours}:${mins}`;
       }
 
-      const dateStr = formatLocalDate(targetDate);
-
-      // Extract Clean Title
       let extractedTitle = trimmed
-        .replace(/(?:trage|erstell[e]?|setz[e]?|plan[e]?|füge|merke|trag|mach[e]?|im kalender|in den kalender|als termin|als kalendereintrag|auf die liste|kalendereintrag|kalender|termin)/gi, '')
+        .replace(/(?:trage|erstell[e]?|setz[e]?|plan[e]?|füge|merke|trag|mach[e]?|im kalender|in den kalender|als termin|als kalendereintrag|auf die liste|kalendereintrag|kalender|termin|ein)/gi, '')
         .replace(/(?:am|für)\s+(?:montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag|morgen|übermorgen|heute|\d{1,2}\.\d{1,2}\.?)/gi, '')
         .replace(/(?:(?:\bum\s*)?\d{1,2}(?::\d{2})?\s*uhr\b|\bum\s*\d{1,2}(?::\d{2})?\b)/gi, '')
-        .replace(/(?:für|mit|von)\s+(?:Papa|Mama|Mia|Jonas|Alle|Papa Thomas|Mama Lisa)/gi, '')
         .replace(/^(?:ein|den|das|einen|eines|zum|beim)\s+/i, '')
         .trim();
 
-      if (extractedTitle.length > 1) {
-        title = extractedTitle.charAt(0).toUpperCase() + extractedTitle.slice(1);
-      } else if (/kindergeburtstag/i.test(trimmed)) {
-        title = 'Kindergeburtstag';
-      } else if (/fußball|fussball/i.test(trimmed)) {
-        title = 'Fußballtraining';
-      } else if (/zahnarzt/i.test(trimmed)) {
-        title = 'Zahnarzttermin';
-      } else if (/arzt/i.test(trimmed)) {
-        title = 'Arzttermin';
+      for (const name of knownMembers) {
+        extractedTitle = extractedTitle.replace(new RegExp(`(?:für|mit|von)\\s+${name}`, 'gi'), '').trim();
       }
+
+      const title = extractedTitle.charAt(0).toUpperCase() + extractedTitle.slice(1);
 
       actions.push({
         type: 'CALENDAR_ADD',
@@ -113,129 +114,72 @@ function parseGermanTextLocally(text: string, knownMembers: string[] = ['Papa', 
       continue;
     }
 
-    // 2. Shopping match
-    if (/einkaufsliste|liste|kaufen|kauf|besorgen|mitbringen|bio-eier|hafermilch|eier|milch|brot|butter|äpfel|bananen|käse/i.test(trimmed)) {
-      const assigned = findAssignedPerson(trimmed);
-      let itemsString = trimmed
-        .replace(/(?:setz[e]?|pack[e]?|schreib[e]?|füg[e]?|kauf[e]?|bring[e]?|bitte|noch)\s+/gi, '')
-        .replace(/(?:auf die einkaufsliste|auf die liste|zum einkaufen|dazu|auf meine liste)/gi, '')
-        .replace(/(?:für|von)\s+(?:Papa|Mama|Mia|Jonas|Papa Thomas|Mama Lisa)/gi, '')
-        .replace(/^(?:mal|bitte|auch)\s+/i, '')
+    // 3. Pinnwand / Feed Post Command
+    if (/pinnwand|notiz|post|nachricht|schreib|sag allen/i.test(trimmed)) {
+      const content = trimmed
+        .replace(/(?:auf die pinnwand|an die pinnwand|als notiz|schreib[e]?|poste|sag allen)/gi, '')
         .trim();
 
-      const rawItems = itemsString.split(/(?:,|\s+und\s+|\s+sowie\s+)/i);
-      for (const rawItem of rawItems) {
-        const itemClean = rawItem.replace(/^(?:den|das|die|ein|eine|einen|2|3|4|10|packung|liter|kg|flasche|dose)\s+/i, '').trim();
-        if (itemClean.length > 1 && !/^(liste|einkaufen)$/i.test(itemClean)) {
-          const capitalized = itemClean.charAt(0).toUpperCase() + itemClean.slice(1);
-          actions.push({
-            type: 'SHOPPING_ADD',
-            item: capitalized,
-            category: categorizeItem(capitalized),
-            assignedTo: assigned || 'Papa'
-          });
-        }
-      }
-      continue;
-    }
-
-    // 3. Status update
-    if (/bin daheim|bin zuhause|auf dem heimweg|unterwegs|in der arbeit|im büro|in der schule/i.test(trimmed)) {
-      let status: MemberStatus = 'home';
-      if (/heimweg|unterwegs/i.test(trimmed)) status = 'away';
-      if (/arbeit|büro/i.test(trimmed)) status = 'work';
-      if (/schule/i.test(trimmed)) status = 'school';
-
-      actions.push({
-        type: 'STATUS_UPDATE',
-        memberName: findAssignedPerson(trimmed) || 'Papa',
-        newStatus: status,
-        statusMessage: trimmed
-      });
-      continue;
-    }
-
-    // 4. Feed note fallback
-    if (trimmed.length > 5) {
       actions.push({
         type: 'FEED_POST',
-        content: trimmed,
+        content: content || trimmed,
         postType: 'note',
-        author: findAssignedPerson(trimmed) || 'Familie'
+        author: findAssignedPerson(trimmed) || (knownMembers.length > 0 ? knownMembers[0] : 'Ich')
+      });
+      continue;
+    }
+
+    // 4. Default: Shopping List Item Command
+    const qtyMatch = trimmed.match(/(\d+(?:[.,]\d+)?)\s*(kg|g|l|liter|flaschen?|packungen?|pck|stk|stück|dose[n]?)?/i);
+    let quantity: number | undefined = undefined;
+    let unit: string | undefined = undefined;
+
+    if (qtyMatch) {
+      quantity = parseFloat(qtyMatch[1].replace(',', '.'));
+      unit = qtyMatch[2] ? qtyMatch[2].toLowerCase() : undefined;
+    }
+
+    let itemName = trimmed
+      .replace(/(?:setz[e]?|kauf[e]?|besorg[e]?|füg[e]?|pack[e]?|schreib[e]?|hol[e]?|bring[e]?|auf die einkaufsliste|auf die liste|zur einkaufsliste|zum einkauf)/gi, '')
+      .replace(/(\d+(?:[.,]\d+)?)\s*(?:kg|g|l|liter|flaschen?|packungen?|pck|stk|stück|dose[n]?)?/gi, '')
+      .replace(/^(?:ein|eine|einen|das|die|der|etwas|noch|bitte)\s+/i, '')
+      .trim();
+
+    for (const name of knownMembers) {
+      itemName = itemName.replace(new RegExp(`(?:für|von)\\s+${name}`, 'gi'), '').trim();
+    }
+
+    if (itemName) {
+      const title = itemName.charAt(0).toUpperCase() + itemName.slice(1);
+      let category: ShoppingCategory = 'Sonstiges';
+
+      if (/milch|käse|butter|joghurt|quark|sahne|eier|fleisch|wurst|fisch/i.test(title)) category = 'Frische';
+      else if (/apfel|äpfel|banane|salat|tomate|gurke|zwiebel|kartoffel|obst|gemüse/i.test(title)) category = 'Obst & Gemüse';
+      else if (/brot|nudeln|reis|mehl|zucker|kaffee|tee|öl|salz|gewürz/i.test(title)) category = 'Vorrat';
+      else if (/wasser|saft|bier|wein|cola|limonade|getränk/i.test(title)) category = 'Getränke';
+      else if (/seife|shampoo|zahnpasta|toilettenpapier|waschmittel|putzmittel/i.test(title)) category = 'Drogerie';
+      else if (/pizza|eis|spinat|pommes|tiefkühl/i.test(title)) category = 'Tiefkühl';
+
+      actions.push({
+        type: 'SHOPPING_ADD',
+        item: title,
+        category,
+        quantity,
+        unit,
+        assignedTo: findAssignedPerson(trimmed)
       });
     }
-  }
-
-  // Fallback if no specific action was found but text exists
-  if (actions.length === 0 && clean.length > 0) {
-    actions.push({
-      type: 'SHOPPING_ADD',
-      item: clean.charAt(0).toUpperCase() + clean.slice(1),
-      category: categorizeItem(clean),
-      assignedTo: 'Alle'
-    });
   }
 
   return actions;
-}
-
-// Call Gemini API if GEMINI_API_KEY is present
-async function parseWithGemini(promptText: string, apiKey: string): Promise<AiAction[] | null> {
-  try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-    const todayStr = formatLocalDate(new Date());
-
-    const systemInstruction = `Du bist der KI-Sprachassistent für die Familien-App 'HomePulse'.
-Heutiges Datum: ${todayStr}.
-Deine Aufgabe: Analysiere den deutschen Text und extrahiere strukturierte Aktionen als JSON-Array.
-
-Gültige Typen:
-1. SHOPPING_ADD: { "type": "SHOPPING_ADD", "item": "Bio-Eier", "category": "Frische", "quantity": 10, "unit": "Stk", "assignedTo": "Papa" }
-   Kategorien: Frische, Vorrat, Obst & Gemüse, Drogerie, Getränke, Tiefkühl, Sonstiges.
-2. CALENDAR_ADD: { "type": "CALENDAR_ADD", "title": "Kindergeburtstag", "date": "YYYY-MM-DD", "time": "16:00", "location": "Trampolinpark", "assignedTo": "Alle" }
-3. FEED_POST: { "type": "FEED_POST", "content": "Essen steht im Kühlschrank", "postType": "meal" }
-4. STATUS_UPDATE: { "type": "STATUS_UPDATE", "memberName": "Papa", "newStatus": "away", "statusMessage": "Auf dem Heimweg" }
-
-Antworte NUR mit reinem JSON-Array ohne Markdown-Backticks.`;
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              { text: systemInstruction },
-              { text: `Benutzer-Befehl: "${promptText}"` }
-            ]
-          }
-        ],
-        generationConfig: {
-          temperature: 0.1,
-          maxOutputTokens: 800
-        }
-      })
-    });
-
-    if (!response.ok) return null;
-
-    const data: any = await response.json();
-    const rawContent = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!rawContent) return null;
-
-    const cleanJson = rawContent.replace(/```json/gi, '').replace(/```/g, '').trim();
-    return JSON.parse(cleanJson) as AiAction[];
-  } catch (error) {
-    return null;
-  }
 }
 
 export async function aiParserHandler(req: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   const headers = {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-household-id'
   };
 
   if (req.method === 'OPTIONS') {
@@ -243,48 +187,26 @@ export async function aiParserHandler(req: HttpRequest, context: InvocationConte
   }
 
   try {
-    const body = (await req.json()) as { prompt?: string; memberNames?: string[] };
-    const prompt = (body?.prompt || '').trim();
+    const body = (await req.json()) as { prompt: string; memberNames?: string[] };
+    const prompt = (body.prompt || '').trim();
+    const memberNames = body.memberNames || [];
 
     if (!prompt) {
       return { status: 400, headers, body: JSON.stringify({ error: 'Prompt is required' }) };
     }
 
-    const geminiKey = process.env.GEMINI_API_KEY;
-    let actions: AiAction[] | null = null;
-    let source: 'gemini' | 'openai' | 'rule_based' = 'rule_based';
-
-    if (geminiKey) {
-      actions = await parseWithGemini(prompt, geminiKey);
-      if (actions && actions.length > 0) {
-        source = 'gemini';
-      }
-    }
-
-    if (!actions || actions.length === 0) {
-      actions = parseGermanTextLocally(prompt, body.memberNames);
-      source = 'rule_based';
-    }
-
+    const actions = parseGermanTextLocally(prompt, memberNames);
     const response: AiParseResponse = {
       rawText: prompt,
       actions,
       summary: `${actions.length} Aktion(en) erkannt`,
-      source
+      source: 'rule_based'
     };
 
-    return {
-      status: 200,
-      headers,
-      body: JSON.stringify(response)
-    };
+    return { status: 200, headers, body: JSON.stringify(response) };
   } catch (error: any) {
     context.error('Error in aiParserHandler:', error);
-    return {
-      status: 500,
-      headers,
-      body: JSON.stringify({ error: error.message || 'Internal Server Error' })
-    };
+    return { status: 500, headers, body: JSON.stringify({ error: error.message || 'Internal Server Error' }) };
   }
 }
 
