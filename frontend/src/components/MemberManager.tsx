@@ -13,15 +13,10 @@ import {
   Trash2,
   Check,
   Sparkles,
-  Home,
-  Navigation,
-  Briefcase,
-  GraduationCap,
-  Palmtree,
   KeyRound,
   Copy,
-  Share2,
-  X
+  X,
+  User as UserIcon
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -31,6 +26,7 @@ const COLOR_OPTIONS = ['#EC4899', '#3B82F6', '#8B5CF6', '#10B981', '#F59E0B', '#
 export const MemberManager: React.FC = () => {
   const [members, setMembers] = useState<FamilyMember[]>([]);
   const [household, setHousehold] = useState<Household | null>(null);
+  const [sessionMember, setSessionMember] = useState<FamilyMember | null>(null);
   const [editingMember, setEditingMember] = useState<FamilyMember | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
@@ -45,6 +41,7 @@ export const MemberManager: React.FC = () => {
     const session = getAuthSession();
     if (session) {
       setHousehold(session.household);
+      setSessionMember(session.member);
     }
     const mems = await Api.getMembers();
     setMembers(mems);
@@ -52,7 +49,12 @@ export const MemberManager: React.FC = () => {
 
   useEffect(() => {
     loadData();
-    const handleDataChange = () => loadData();
+    const handleDataChange = (e: any) => {
+      const res = e?.detail?.resource;
+      if (!res || res === 'members' || res === 'auth' || res === 'all') {
+        loadData();
+      }
+    };
     window.addEventListener('homepulse-data-change', handleDataChange);
     return () => window.removeEventListener('homepulse-data-change', handleDataChange);
   }, []);
@@ -122,29 +124,31 @@ export const MemberManager: React.FC = () => {
     if (household?.inviteCode) {
       navigator.clipboard.writeText(household.inviteCode);
       setCopiedCode(true);
-      setTimeout(() => setCopiedCode(false), 2500);
+      setTimeout(() => setCopiedCode(false), 2000);
     }
   };
 
   const getStatusInfo = (status: MemberStatus) => {
     switch (status) {
       case 'home':
-        return { label: 'Zuhause', icon: <Home className="w-3.5 h-3.5" />, color: 'text-emerald-400 bg-emerald-500/20 border-emerald-500/30' };
+        return { label: 'Zuhause', icon: '🏠', color: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' };
       case 'away':
-        return { label: 'Unterwegs', icon: <Navigation className="w-3.5 h-3.5" />, color: 'text-amber-400 bg-amber-500/20 border-amber-500/30' };
+        return { label: 'Unterwegs', icon: '🚗', color: 'bg-amber-500/20 text-amber-300 border-amber-500/30' };
       case 'work':
-        return { label: 'Arbeit / Büro', icon: <Briefcase className="w-3.5 h-3.5" />, color: 'text-blue-400 bg-blue-500/20 border-blue-500/30' };
+        return { label: 'Im Büro', icon: '💼', color: 'bg-blue-500/20 text-blue-300 border-blue-500/30' };
       case 'school':
-        return { label: 'Schule / Uni', icon: <GraduationCap className="w-3.5 h-3.5" />, color: 'text-purple-400 bg-purple-500/20 border-purple-500/30' };
+        return { label: 'In der Schule', icon: '📚', color: 'bg-purple-500/20 text-purple-300 border-purple-500/30' };
       case 'vacation':
-        return { label: 'Im Urlaub', icon: <Palmtree className="w-3.5 h-3.5" />, color: 'text-rose-400 bg-rose-500/20 border-rose-500/30' };
+        return { label: 'Im Urlaub', icon: '🌴', color: 'bg-orange-500/20 text-orange-300 border-orange-500/30' };
+      default:
+        return { label: 'Aktiv', icon: '📍', color: 'bg-slate-500/20 text-slate-300 border-slate-500/30' };
     }
   };
 
   return (
     <div className="space-y-6">
-      {/* Header Card */}
-      <div className="glass-panel rounded-3xl p-6 relative overflow-hidden">
+      {/* Header */}
+      <div className="glass-panel rounded-3xl p-6 border border-white/10">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="p-3 rounded-2xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
@@ -219,10 +223,17 @@ export const MemberManager: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {members.map(m => {
           const statusInfo = getStatusInfo(m.status);
+          const isMe = sessionMember?.id === m.id;
+          const isChild = m.role === 'child';
+          const canEditProfile = isMe || (sessionMember?.role === 'admin' && isChild);
+          const canChangeStatus = isMe || (sessionMember?.role === 'admin' && isChild);
+
           return (
             <div
               key={m.id}
-              className="glass-panel rounded-2xl p-5 border border-white/10 hover:border-white/20 transition-all space-y-4 relative overflow-hidden"
+              className={`glass-panel rounded-2xl p-5 border transition-all space-y-4 relative overflow-hidden ${
+                isMe ? 'border-emerald-500/30 bg-emerald-950/10' : 'border-white/10 hover:border-white/20'
+              }`}
             >
               {/* Member Top Bar */}
               <div className="flex items-start justify-between">
@@ -238,27 +249,36 @@ export const MemberManager: React.FC = () => {
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
-                      <h3 className="text-base font-bold text-white">{m.name}</h3>
+                      <h3 className="text-base font-bold text-white flex items-center gap-1.5">
+                        <span>{m.name}</span>
+                        {isMe && (
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                            Du
+                          </span>
+                        )}
+                      </h3>
                       <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-white/10">
                         {m.role === 'admin' ? 'Admin' : (m.role === 'child' ? 'Kind' : 'Mitglied')}
                       </span>
                     </div>
                     <p className="text-xs text-slate-400 mt-0.5">
-                      {m.statusMessage || 'Kein Statuszusatz eingetragen'}
+                      {m.statusMessage || (m.status === 'home' ? 'Zuhause' : m.status === 'work' ? 'Im Büro' : m.status === 'school' ? 'In der Schule' : 'Unterwegs')}
                     </p>
                   </div>
                 </div>
 
-                <button
-                  onClick={() => setEditingMember(m)}
-                  className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
-                  title="Profil bearbeiten"
-                >
-                  <Edit2 className="w-4 h-4" />
-                </button>
+                {canEditProfile && (
+                  <button
+                    onClick={() => setEditingMember(m)}
+                    className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                    title="Profil bearbeiten"
+                  >
+                    <Edit2 className="w-4 h-4" />
+                  </button>
+                )}
               </div>
 
-              {/* Status Selector */}
+              {/* Status Section */}
               <div className="space-y-1.5 pt-2 border-t border-white/5">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-semibold text-slate-400">Aktueller Status:</span>
@@ -268,30 +288,38 @@ export const MemberManager: React.FC = () => {
                   </span>
                 </div>
 
-                <div className="grid grid-cols-4 gap-1.5 mt-2">
-                  {[
-                    { id: 'home', label: 'Zuhause', icon: '🏠' },
-                    { id: 'away', label: 'Unterwegs', icon: '🚗' },
-                    { id: 'work', label: 'Büro', icon: '💼' },
-                    { id: 'school', label: 'Schule', icon: '📚' }
-                  ].map(s => (
-                    <button
-                      key={s.id}
-                      onClick={() => handleUpdateStatus(m, s.id as MemberStatus)}
-                      className={`px-2 py-1.5 rounded-xl text-xs font-medium border transition-all flex items-center justify-center gap-1 ${
-                        m.status === s.id
-                          ? 'bg-white/20 text-white font-bold border-white/40 shadow-sm'
-                          : 'bg-slate-900/50 text-slate-400 border-white/5 hover:border-white/15'
-                      }`}
-                    >
-                      <span>{s.icon}</span>
-                      <span className="hidden sm:inline">{s.label}</span>
-                    </button>
-                  ))}
-                </div>
+                {/* Only render interactive status switcher for YOURSELF or child profiles */}
+                {canChangeStatus ? (
+                  <div className="grid grid-cols-4 gap-1.5 mt-2">
+                    {[
+                      { id: 'home', label: 'Zuhause', icon: '🏠' },
+                      { id: 'away', label: 'Unterwegs', icon: '🚗' },
+                      { id: 'work', label: 'Büro', icon: '💼' },
+                      { id: 'school', label: 'Schule', icon: '📚' }
+                    ].map(s => (
+                      <button
+                        key={s.id}
+                        onClick={() => handleUpdateStatus(m, s.id as MemberStatus)}
+                        className={`px-2 py-1.5 rounded-xl text-xs font-medium border transition-all flex items-center justify-center gap-1 ${
+                          m.status === s.id
+                            ? 'bg-white/20 text-white font-bold border-white/40 shadow-sm'
+                            : 'bg-slate-900/50 text-slate-400 border-white/5 hover:border-white/15'
+                        }`}
+                      >
+                        <span>{s.icon}</span>
+                        <span className="hidden sm:inline">{s.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="mt-1.5 p-2 rounded-xl bg-slate-900/40 border border-white/5 text-xs text-slate-400 flex items-center gap-2">
+                    <span className="text-base">{statusInfo.icon}</span>
+                    <span className="text-[11px]">Wird vom Mitglied selbst auf dem eigenen Gerät verwaltet</span>
+                  </div>
+                )}
               </div>
 
-              {/* Privacy & Location Sharing Toggle */}
+              {/* Privacy & Location Sharing */}
               <div className="flex items-center justify-between pt-3 border-t border-white/5">
                 <div className="flex items-center gap-2">
                   {m.locationShared ? (
@@ -301,24 +329,26 @@ export const MemberManager: React.FC = () => {
                   )}
                   <div>
                     <p className="text-xs font-medium text-slate-200">
-                      {m.locationShared ? 'Status & Standort freigegeben' : 'Privater Modus aktiv'}
+                      {m.locationShared ? 'Status freigegeben' : 'Privater Modus aktiv'}
                     </p>
                     <p className="text-[10px] text-slate-400">
-                      {m.locationShared ? 'Sichtbar für Haushaltsmitglieder' : 'Status ist privat'}
+                      {m.locationShared ? 'Für Haushaltsmitglieder sichtbar' : 'Status ist privat'}
                     </p>
                   </div>
                 </div>
 
-                <button
-                  onClick={() => handleTogglePrivacy(m)}
-                  className={`px-3 py-1 rounded-xl text-xs font-semibold border transition-all ${
-                    m.locationShared
-                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                      : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                  }`}
-                >
-                  {m.locationShared ? 'Aktiv' : 'Deaktiviert'}
-                </button>
+                {isMe && (
+                  <button
+                    onClick={() => handleTogglePrivacy(m)}
+                    className={`px-3 py-1 rounded-xl text-xs font-semibold border transition-all ${
+                      m.locationShared
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                        : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                    }`}
+                  >
+                    {m.locationShared ? 'Aktiv' : 'Deaktiviert'}
+                  </button>
+                )}
               </div>
             </div>
           );
@@ -339,102 +369,89 @@ export const MemberManager: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleSaveEdit} className="mt-4 space-y-4">
+            <form onSubmit={handleSaveEdit} className="space-y-4 mt-4">
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Name</label>
+                <label className="block text-xs font-medium text-slate-300 mb-1.5">Name</label>
                 <input
                   type="text"
-                  required
                   value={editingMember.name}
                   onChange={e => setEditingMember({ ...editingMember, name: e.target.value })}
-                  className="w-full px-4 py-2 rounded-xl bg-slate-950/70 border border-white/10 text-white text-sm focus:outline-none focus:border-indigo-500/50"
+                  className="w-full px-4 py-2.5 rounded-xl bg-slate-800 border border-white/10 text-white text-sm focus:outline-none focus:border-emerald-500"
+                  required
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Rolle</label>
-                <select
-                  value={editingMember.role}
-                  onChange={e => setEditingMember({ ...editingMember, role: e.target.value as any })}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-950/70 border border-white/10 text-white text-xs focus:outline-none"
-                >
-                  <option value="admin" className="bg-slate-900">Admin (Eltern)</option>
-                  <option value="member" className="bg-slate-900">Mitglied</option>
-                  <option value="child" className="bg-slate-900">Kind</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Statusnachricht</label>
+                <label className="block text-xs font-medium text-slate-300 mb-1.5">Statuszusatz (optional)</label>
                 <input
                   type="text"
                   value={editingMember.statusMessage || ''}
                   onChange={e => setEditingMember({ ...editingMember, statusMessage: e.target.value })}
-                  placeholder="z.B. Zuhause im Homeoffice"
-                  className="w-full px-4 py-2 rounded-xl bg-slate-950/70 border border-white/10 text-white text-xs focus:outline-none focus:border-indigo-500/50"
+                  placeholder="z. B. Im Homeoffice bis 17:00"
+                  className="w-full px-4 py-2.5 rounded-xl bg-slate-800 border border-white/10 text-white text-sm focus:outline-none focus:border-emerald-500"
                 />
               </div>
 
-              {/* Avatar Selector */}
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1.5">Avatar Emoji</label>
-                <div className="flex flex-wrap gap-2">
-                  {AVATAR_OPTIONS.map(emoji => (
+                <label className="block text-xs font-medium text-slate-300 mb-1.5">Avatar</label>
+                <div className="grid grid-cols-6 gap-2">
+                  {AVATAR_OPTIONS.map(a => (
                     <button
-                      key={emoji}
                       type="button"
-                      onClick={() => setEditingMember({ ...editingMember, avatar: emoji })}
-                      className={`w-9 h-9 rounded-xl flex items-center justify-center text-lg border transition-all ${
-                        editingMember.avatar === emoji
-                          ? 'bg-white/20 border-indigo-400 scale-110 shadow'
-                          : 'bg-slate-950/50 border-white/10 hover:border-white/20'
+                      key={a}
+                      onClick={() => setEditingMember({ ...editingMember, avatar: a })}
+                      className={`p-2.5 rounded-xl text-xl flex items-center justify-center border transition-all ${
+                        editingMember.avatar === a
+                          ? 'bg-emerald-500/20 border-emerald-500 scale-105'
+                          : 'bg-slate-800/50 border-white/5 hover:border-white/20'
                       }`}
                     >
-                      {emoji}
+                      {a}
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* Color Selector */}
               <div>
                 <label className="block text-xs font-medium text-slate-300 mb-1.5">Profilfarbe</label>
-                <div className="flex flex-wrap gap-2">
-                  {COLOR_OPTIONS.map(col => (
+                <div className="flex items-center gap-2">
+                  {COLOR_OPTIONS.map(c => (
                     <button
-                      key={col}
                       type="button"
-                      onClick={() => setEditingMember({ ...editingMember, color: col })}
-                      className={`w-7 h-7 rounded-full border transition-all ${
-                        editingMember.color === col ? 'ring-2 ring-white scale-110' : 'opacity-70 hover:opacity-100'
+                      key={c}
+                      onClick={() => setEditingMember({ ...editingMember, color: c })}
+                      className={`w-7 h-7 rounded-full transition-transform ${
+                        editingMember.color === c ? 'scale-125 ring-2 ring-white ring-offset-2 ring-offset-slate-900' : ''
                       }`}
-                      style={{ backgroundColor: col }}
+                      style={{ backgroundColor: c }}
                     />
                   ))}
                 </div>
               </div>
 
-              <div className="flex items-center justify-between pt-4 border-t border-white/10">
-                <button
-                  type="button"
-                  onClick={() => handleDeleteMember(editingMember.id)}
-                  className="px-3 py-2 rounded-xl text-xs text-rose-400 hover:bg-rose-500/10 flex items-center gap-1 transition-colors"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>Mitglied löschen</span>
-                </button>
+              <div className="flex items-center justify-between pt-4 border-t border-white/10 gap-3">
+                {members.length > 1 && sessionMember?.role === 'admin' && (
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteMember(editingMember.id)}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-rose-400 hover:bg-rose-500/10 text-xs font-medium transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>Entfernen</span>
+                  </button>
+                )}
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 ml-auto">
                   <button
                     type="button"
                     onClick={() => setEditingMember(null)}
-                    className="px-4 py-2 rounded-xl text-xs text-slate-400 hover:text-white"
+                    className="px-4 py-2 rounded-xl text-slate-400 hover:text-white text-xs font-medium"
                   >
                     Abbrechen
                   </button>
                   <button
                     type="submit"
-                    className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/30"
+                    className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg shadow-emerald-600/30"
                   >
                     Speichern
                   </button>
@@ -450,7 +467,7 @@ export const MemberManager: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-in fade-in">
           <div className="relative w-full max-w-md rounded-3xl glass-panel bg-slate-900/95 border border-white/15 shadow-2xl p-6">
             <div className="flex items-center justify-between pb-4 border-b border-white/10">
-              <h3 className="text-lg font-bold text-white">Neues Familienmitglied</h3>
+              <h3 className="text-lg font-bold text-white">Familienmitglied anlegen</h3>
               <button
                 onClick={() => setIsAddModalOpen(false)}
                 className="p-2 rounded-xl text-slate-400 hover:text-white"
@@ -459,82 +476,80 @@ export const MemberManager: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleCreateMember} className="mt-4 space-y-4">
+            <form onSubmit={handleCreateMember} className="space-y-4 mt-4">
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Name *</label>
+                <label className="block text-xs font-medium text-slate-300 mb-1.5">Name *</label>
                 <input
                   type="text"
-                  required
                   value={newName}
                   onChange={e => setNewName(e.target.value)}
-                  placeholder="z.B. Oma Gertrud oder Leon"
-                  className="w-full px-4 py-2 rounded-xl bg-slate-950/70 border border-white/10 text-white text-sm focus:outline-none focus:border-indigo-500/50"
+                  placeholder="z. B. Oma Anna, Lukas (Kind)"
+                  className="w-full px-4 py-2.5 rounded-xl bg-slate-800 border border-white/10 text-white text-sm focus:outline-none focus:border-emerald-500"
+                  required
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Rolle</label>
+                <label className="block text-xs font-medium text-slate-300 mb-1.5">Rolle</label>
                 <select
                   value={newRole}
                   onChange={e => setNewRole(e.target.value as any)}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-950/70 border border-white/10 text-white text-xs focus:outline-none"
+                  className="w-full px-4 py-2.5 rounded-xl bg-slate-800 border border-white/10 text-white text-sm focus:outline-none focus:border-emerald-500"
                 >
-                  <option value="admin" className="bg-slate-900">Admin (Eltern)</option>
-                  <option value="member" className="bg-slate-900">Mitglied</option>
-                  <option value="child" className="bg-slate-900">Kind</option>
+                  <option value="member">Mitglied (Erwachsene / Partner)</option>
+                  <option value="child">Kind (ohne eigenes Konto)</option>
+                  <option value="admin">Administrator</option>
                 </select>
               </div>
 
-              {/* Avatar Selector */}
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1.5">Avatar Emoji</label>
-                <div className="flex flex-wrap gap-2">
-                  {AVATAR_OPTIONS.map(emoji => (
+                <label className="block text-xs font-medium text-slate-300 mb-1.5">Avatar</label>
+                <div className="grid grid-cols-6 gap-2">
+                  {AVATAR_OPTIONS.map(a => (
                     <button
-                      key={emoji}
                       type="button"
-                      onClick={() => setNewAvatar(emoji)}
-                      className={`w-9 h-9 rounded-xl flex items-center justify-center text-lg border transition-all ${
-                        newAvatar === emoji
-                          ? 'bg-white/20 border-indigo-400 scale-110'
-                          : 'bg-slate-950/50 border-white/10'
+                      key={a}
+                      onClick={() => setNewAvatar(a)}
+                      className={`p-2.5 rounded-xl text-xl flex items-center justify-center border transition-all ${
+                        newAvatar === a
+                          ? 'bg-emerald-500/20 border-emerald-500 scale-105'
+                          : 'bg-slate-800/50 border-white/5 hover:border-white/20'
                       }`}
                     >
-                      {emoji}
+                      {a}
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* Color Selector */}
               <div>
                 <label className="block text-xs font-medium text-slate-300 mb-1.5">Farbe</label>
-                <div className="flex flex-wrap gap-2">
-                  {COLOR_OPTIONS.map(col => (
+                <div className="flex items-center gap-2">
+                  {COLOR_OPTIONS.map(c => (
                     <button
-                      key={col}
                       type="button"
-                      onClick={() => setNewColor(col)}
-                      className={`w-7 h-7 rounded-full border transition-all ${
-                        newColor === col ? 'ring-2 ring-white scale-110' : 'opacity-70'
+                      key={c}
+                      onClick={() => setNewColor(c)}
+                      className={`w-7 h-7 rounded-full transition-transform ${
+                        newColor === c ? 'scale-125 ring-2 ring-white ring-offset-2 ring-offset-slate-900' : ''
                       }`}
-                      style={{ backgroundColor: col }}
+                      style={{ backgroundColor: c }}
                     />
                   ))}
                 </div>
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-4 border-t border-white/10">
+              <div className="flex items-center justify-end pt-4 border-t border-white/10 gap-2">
                 <button
                   type="button"
                   onClick={() => setIsAddModalOpen(false)}
-                  className="px-4 py-2 rounded-xl text-xs text-slate-400 hover:text-white"
+                  className="px-4 py-2 rounded-xl text-slate-400 hover:text-white text-xs font-medium"
                 >
                   Abbrechen
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/30"
+                  className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg shadow-emerald-600/30"
                 >
                   Hinzufügen
                 </button>
